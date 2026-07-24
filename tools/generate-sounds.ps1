@@ -34,6 +34,23 @@ $MissAttackMs = 25.0
 $MissReleaseMs = 75.0
 $MissVolume = 0.15
 
+# Twelve D-major-pentatonic rows used by Design Mode. Player rows are
+# generated one octave above the corresponding base rows.
+$DesignBasePitchHz = @(
+    73.416,  # D2
+    82.407,  # E2
+    92.499,  # F#2
+    110.000, # A2
+    123.471, # B2
+    146.832, # D3
+    164.814, # E3
+    184.997, # F#3
+    220.000, # A3
+    246.942, # B3
+    293.665, # D4
+    329.628  # E4
+)
+
 $OutputDirectory = Join-Path $PSScriptRoot "..\app\src\main\res\raw"
 
 function Format-Number {
@@ -162,5 +179,29 @@ New-GameSound `
     -AttackMs $MissAttackMs `
     -ReleaseMs $MissReleaseMs `
     -Volume $MissVolume
+
+for ($index = 0; $index -lt $DesignBasePitchHz.Count; $index++) {
+    $suffix = "{0:D2}" -f $index
+    $basePitch = $DesignBasePitchHz[$index]
+    $playerPitch = $basePitch * 2.0
+
+    New-GameSound `
+        -FileName "design_base_$suffix.wav" `
+        -Waveform $BaseWaveform `
+        -PitchHz $basePitch `
+        -DurationMs $ToneDurationMs `
+        -AttackMs $ToneAttackMs `
+        -ReleaseMs $ToneReleaseMs `
+        -Volume $BaseVolume
+
+    New-GameSound `
+        -FileName "design_player_$suffix.wav" `
+        -Waveform $PerfectWaveform `
+        -PitchHz $playerPitch `
+        -DurationMs $ToneDurationMs `
+        -AttackMs $ToneAttackMs `
+        -ReleaseMs $ToneReleaseMs `
+        -Volume $PerfectVolume
+}
 
 Write-Host "All game sounds regenerated in $OutputDirectory"

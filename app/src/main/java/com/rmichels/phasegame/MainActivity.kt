@@ -73,18 +73,27 @@ private const val GOOD_WINDOW_MS = 70L
 private const val CLOSE_WINDOW_MS = 120L
 private const val REPETITIONS_PER_PHASE = 4L
 private const val MAX_PATTERN_QUEUE_ITEMS = 11
-private const val STARTUP_QUEUE_PULL_STEPS = 12f
-private const val REGULAR_QUEUE_PULL_STEPS = 10f
 private const val MISS_QUEUE_RAISE_SLOTS = 0.25f
+internal const val MIN_PATTERN_STEPS = 2
+internal const val MAX_PATTERN_STEPS = 16
+private const val BASE_PITCH_SECTIONS = 4
+private const val DEFAULT_RHYTHM_DOT_STRIDE_DP = 28f
+private const val MAX_RHYTHM_WIDTH_DP = 336f
+private const val QUEUE_FALL_SLOTS_PER_BAR = 1.2f
 
 /**
  * Converts one monotonic start time into bar, phase, and animation positions.
  * All rhythm systems must use this clock so their timing cannot drift apart.
  */
 internal class RhythmClock(
-    private val stepDurationMs: Long,
+    val stepDurationMs: Long,
     private val stepsPerBar: Int
 ) {
+    init {
+        require(stepDurationMs > 0L)
+        require(stepsPerBar > 0)
+    }
+
     var startTimeMs: Long = 0L
         private set
 
@@ -123,10 +132,77 @@ internal class RhythmClock(
     ): Int = phaseIndexForBar(absoluteBarIndex(nowMs), repetitionsPerPhase)
 }
 
-internal fun shiftedRhythm(baseRhythm: List<Boolean>, phaseIndex: Int): List<Boolean> =
-    List(baseRhythm.size) { index ->
-        baseRhythm[(index + phaseIndex) % baseRhythm.size]
+internal fun shiftedRhythm(
+    baseRhythm: List<Boolean>,
+    phaseIndex: Int
+): List<Boolean> {
+    require(baseRhythm.isNotEmpty())
+    return List(baseRhythm.size) { index ->
+        baseRhythm[Math.floorMod(index + phaseIndex, baseRhythm.size)]
     }
+}
+
+internal fun validateBaseRhythm(rhythm: List<Boolean>): List<Boolean> {
+    require(rhythm.size in MIN_PATTERN_STEPS..MAX_PATTERN_STEPS) {
+        "Base rhythm must contain $MIN_PATTERN_STEPS to $MAX_PATTERN_STEPS steps."
+    }
+    require(rhythm.any { it }) {
+        "Base rhythm must contain at least one played step."
+    }
+    return rhythm
+}
+
+internal fun repeatingPatternValue(pattern: List<Boolean>, stepIndex: Int): Boolean {
+    require(pattern.isNotEmpty())
+    return pattern[Math.floorMod(stepIndex, pattern.size)]
+}
+
+internal fun pitchSectionForStep(
+    stepIndex: Int,
+    stepsPerBar: Int,
+    sectionCount: Int = BASE_PITCH_SECTIONS
+): Int {
+    require(stepIndex in 0 until stepsPerBar)
+    require(stepsPerBar > 0)
+    require(sectionCount > 0)
+    return ((stepIndex.toLong() * sectionCount) / stepsPerBar)
+        .toInt()
+        .coerceAtMost(sectionCount - 1)
+}
+
+internal fun startupQueueSlotsPerStep(
+    patternStepCount: Int,
+    queueItemCount: Int
+): Float {
+    require(patternStepCount > 0)
+    require(queueItemCount > 1)
+    return (queueItemCount - 1).toFloat() / patternStepCount
+}
+
+internal fun regularQueueSlotsPerStep(patternStepCount: Int): Float {
+    require(patternStepCount > 0)
+    return QUEUE_FALL_SLOTS_PER_BAR / patternStepCount
+}
+
+internal fun rhythmCursorOffsetDp(
+    barProgress: Float,
+    patternStepCount: Int
+): Float {
+    require(patternStepCount > 0)
+    val dotStride = rhythmDotStrideDp(patternStepCount)
+    val firstDotCenter =
+        -((patternStepCount - 1) * dotStride) / 2f
+    return firstDotCenter +
+        patternStepCount * dotStride * barProgress
+}
+
+internal fun rhythmDotStrideDp(patternStepCount: Int): Float {
+    require(patternStepCount > 0)
+    return minOf(
+        DEFAULT_RHYTHM_DOT_STRIDE_DP,
+        MAX_RHYTHM_WIDTH_DP / patternStepCount
+    )
+}
 
 private enum class TapJudgment(val label: String) {
     PERFECT("Perfect"),
@@ -153,6 +229,7 @@ private enum class LayerPattern {
 
 private enum class AppScreen {
     TITLE,
+    DESIGN,
     PLAYING,
     GAME_OVER
 }
@@ -170,6 +247,7 @@ private data class ExpectedHit(
 
 private data class QueuedPatternBar(
     val absoluteBarIndex: Long,
+    val phaseIndex: Int,
     val rhythm: List<Boolean>
 )
 
@@ -194,7 +272,8 @@ private fun findNearestExpectedHit(
                 .filter { targetRhythm[it] }
                 .map { hitIndex ->
                     val expectedTimeMs =
-                        candidateBar * barDurationMs + hitIndex * STEP_DURATION_MS
+                        candidateBar * barDurationMs +
+                            hitIndex * rhythmClock.stepDurationMs
                     ExpectedHit(
                         absoluteBarIndex = candidateBar,
                         stepIndex = hitIndex,
@@ -289,14 +368,54 @@ class MainActivity : ComponentActivity() {
                     var appScreen by rememberSaveable {
                         mutableStateOf(AppScreen.TITLE)
                     }
+                    var perfectModeEnabled by rememberSaveable {
+                        mutableStateOf(false)
+                    }
+                    var draftDesign by rememberSaveable(
+                        stateSaver = GameDesignSaver
+                    ) {
+                        mutableStateOf(GameDesign.default())
+                    }
+                    var committedDesign by rememberSaveable(
+                        stateSaver = GameDesignSaver
+                    ) {
+                        mutableStateOf(GameDesign.default())
+                    }
+                    var hasCommittedDesign by rememberSaveable {
+                        mutableStateOf(false)
+                    }
 
                     when (appScreen) {
                         AppScreen.TITLE -> TitleScreen(
                             onStart = { appScreen = AppScreen.PLAYING },
+                            onOpenDesign = { appScreen = AppScreen.DESIGN },
+                            perfectModeEnabled = perfectModeEnabled,
+                            onTogglePerfectMode = {
+                                perfectModeEnabled = !perfectModeEnabled
+                            },
+                            modifier = Modifier.padding(innerPadding)
+                        )
+                        AppScreen.DESIGN -> DesignScreen(
+                            design = draftDesign,
+                            onDesignChange = { updatedDesign ->
+                                draftDesign = updatedDesign
+                            },
+                            onPlay = {
+                                committedDesign = draftDesign
+                                hasCommittedDesign = true
+                                appScreen = AppScreen.PLAYING
+                            },
+                            onReturnToTitle = {
+                                appScreen = AppScreen.TITLE
+                            },
                             modifier = Modifier.padding(innerPadding)
                         )
                         AppScreen.PLAYING -> PhaseGameScreen(
                             onGameOver = { appScreen = AppScreen.GAME_OVER },
+                            perfectModeEnabled = perfectModeEnabled,
+                            gameDesign = committedDesign.takeIf {
+                                hasCommittedDesign
+                            },
                             modifier = Modifier.padding(innerPadding)
                         )
                         AppScreen.GAME_OVER -> GameOverScreen(
@@ -313,6 +432,9 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun TitleScreen(
     onStart: () -> Unit,
+    onOpenDesign: () -> Unit,
+    perfectModeEnabled: Boolean,
+    onTogglePerfectMode: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val titleVoiceTrack = remember {
@@ -344,6 +466,20 @@ fun TitleScreen(
         Button(onClick = onStart) {
             Text("Start")
         }
+        Spacer(modifier = Modifier.height(16.dp))
+        Button(onClick = onOpenDesign) {
+            Text("Design")
+        }
+        Spacer(modifier = Modifier.height(16.dp))
+        Button(onClick = onTogglePerfectMode) {
+            Text(
+                if (perfectModeEnabled) {
+                    "Perfect Mode: On"
+                } else {
+                    "Perfect Mode: Off"
+                }
+            )
+        }
     }
 }
 
@@ -372,13 +508,22 @@ fun GameOverScreen(
 }
 
 @Composable
-fun PhaseGameScreen(
+internal fun PhaseGameScreen(
     onGameOver: () -> Unit,
+    perfectModeEnabled: Boolean,
+    gameDesign: GameDesign?,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
-    val baseRhythm = remember {
-        listOf(true, true, true, false, true, true, false, true, false, true, true, false)
+    val baseRhythm = remember(gameDesign) {
+        gameDesign?.baseRhythm ?: validateBaseRhythm(
+            listOf(
+                true, false, true, false,
+                true, true, false, true,
+                false, true, false, true,
+                true, false, true, false
+            )
+        )
     }
     val bassDrumPattern = remember {
         listOf(true, false, false, false, true, false, false, false, true, false, false, false)
@@ -401,7 +546,10 @@ fun PhaseGameScreen(
         )
     }
     val rhythmClock = remember {
-        RhythmClock(STEP_DURATION_MS, baseRhythm.size)
+        RhythmClock(
+            stepDurationMs = STEP_DURATION_MS,
+            stepsPerBar = baseRhythm.size
+        )
     }
     val playerPitchGenerator = remember {
         PopMotifPitchGenerator()
@@ -437,8 +585,17 @@ fun PhaseGameScreen(
     var snareSoundId by remember { mutableIntStateOf(0) }
     var openHiHatSoundId by remember { mutableIntStateOf(0) }
     var closedHiHatSoundId by remember { mutableIntStateOf(0) }
+    val designBaseSoundIds = remember {
+        IntArray(DESIGN_PITCH_COUNT)
+    }
+    val designPlayerSoundIds = remember {
+        IntArray(DESIGN_PITCH_COUNT)
+    }
     var loadedSoundCount by remember { mutableIntStateOf(0) }
-    val isAudioLoaded = loadedSoundCount == 9
+    val expectedLoadedSoundCount =
+        9 + DESIGN_BASE_SOUND_RESOURCES.size +
+            DESIGN_PLAYER_SOUND_RESOURCES.size
+    val isAudioLoaded = loadedSoundCount == expectedLoadedSoundCount
     var tapJudgment by remember { mutableStateOf<TapJudgment?>(null) }
     var activeLayerCount by remember { mutableIntStateOf(0) }
     val barPerformances = remember {
@@ -460,6 +617,14 @@ fun PhaseGameScreen(
         snareSoundId = soundPool.load(context, R.raw.snare, 1)
         openHiHatSoundId = soundPool.load(context, R.raw.open_hi_hat, 1)
         closedHiHatSoundId = soundPool.load(context, R.raw.closed_hi_hat, 1)
+        DESIGN_BASE_SOUND_RESOURCES.forEachIndexed { index, resourceId ->
+            designBaseSoundIds[index] =
+                soundPool.load(context, resourceId, 1)
+        }
+        DESIGN_PLAYER_SOUND_RESOURCES.forEachIndexed { index, resourceId ->
+            designPlayerSoundIds[index] =
+                soundPool.load(context, resourceId, 1)
+        }
 
         onDispose {
             soundPool.setOnLoadCompleteListener(null)
@@ -475,6 +640,7 @@ fun PhaseGameScreen(
                 patternQueue.add(
                     QueuedPatternBar(
                         absoluteBarIndex = absoluteBar.toLong(),
+                        phaseIndex = queuedPhase,
                         rhythm = shiftedRhythm(baseRhythm, queuedPhase)
                     )
                 )
@@ -492,24 +658,26 @@ fun PhaseGameScreen(
         var currentAbsoluteBar = 0L
         var previousStepProgress = 0f
         var basePlaybackRate = 1f
-        val stepsPerBasePitchSection = baseRhythm.size / 4
+        var currentBasePitchSection = -1
         var nextQueuedBar =
             (patternQueue.lastOrNull()?.absoluteBarIndex ?: -1L) + 1L
 
         while (isGameplayActive && isMetronomePlaying && isAudioLoaded) {
             val nowMs = SystemClock.elapsedRealtime()
             val elapsedMs = rhythmClock.elapsedMs(nowMs)
-            val dueAbsoluteStep = elapsedMs / STEP_DURATION_MS
+            val dueAbsoluteStep =
+                elapsedMs / rhythmClock.stepDurationMs
             val absoluteBar = rhythmClock.absoluteBarIndex(nowMs)
             val newStepProgress =
-                elapsedMs.toFloat() / STEP_DURATION_MS
+                elapsedMs.toFloat() / rhythmClock.stepDurationMs
             if (isQueueDropping) {
                 val elapsedSteps =
                     (newStepProgress - previousStepProgress).coerceAtLeast(0f)
                 introCurrentSlot = minOf(
                     (MAX_PATTERN_QUEUE_ITEMS - 1).toFloat(),
                     introCurrentSlot +
-                        elapsedSteps / REGULAR_QUEUE_PULL_STEPS
+                        elapsedSteps *
+                        regularQueueSlotsPerStep(baseRhythm.size)
                 )
             }
             previousStepProgress = newStepProgress
@@ -545,6 +713,7 @@ fun PhaseGameScreen(
                             patternQueue.add(
                                 QueuedPatternBar(
                                     absoluteBarIndex = nextQueuedBar,
+                                    phaseIndex = queuedPhase,
                                     rhythm = shiftedRhythm(baseRhythm, queuedPhase)
                                 )
                             )
@@ -564,42 +733,53 @@ fun PhaseGameScreen(
 
             while (nextAbsoluteStep <= dueAbsoluteStep) {
                 val stepInBar = (nextAbsoluteStep % baseRhythm.size).toInt()
-                if (stepInBar % stepsPerBasePitchSection == 0) {
+                val basePitchSection =
+                    pitchSectionForStep(stepInBar, baseRhythm.size)
+                if (basePitchSection != currentBasePitchSection) {
+                    currentBasePitchSection = basePitchSection
                     basePlaybackRate =
                         basePitchGenerator.nextPlaybackRate()
                 }
                 if (baseRhythm[stepInBar]) {
+                    val designedBasePitch =
+                        gameDesign?.baseNotes?.get(stepInBar)
                     soundPool.play(
-                        baseSoundId,
+                        designedBasePitch?.let { pitch ->
+                            designBaseSoundIds[pitch]
+                        } ?: baseSoundId,
                         1f,
                         1f,
                         1,
                         0,
-                        basePlaybackRate
+                        if (designedBasePitch == null) {
+                            basePlaybackRate
+                        } else {
+                            1f
+                        }
                     )
                 }
                 val activeLayers = layerOrder.take(activeLayerCount)
                 if (
                     LayerPattern.BASS_DRUM in activeLayers &&
-                    bassDrumPattern[stepInBar]
+                    repeatingPatternValue(bassDrumPattern, stepInBar)
                 ) {
                     soundPool.play(bassDrumSoundId, 1f, 1f, 1, 0, 1f)
                 }
                 if (
                     LayerPattern.SNARE in activeLayers &&
-                    snarePattern[stepInBar]
+                    repeatingPatternValue(snarePattern, stepInBar)
                 ) {
                     soundPool.play(snareSoundId, 1f, 1f, 1, 0, 1f)
                 }
                 if (
                     LayerPattern.OPEN_HI_HAT in activeLayers &&
-                    openHiHatPattern[stepInBar]
+                    repeatingPatternValue(openHiHatPattern, stepInBar)
                 ) {
                     soundPool.play(openHiHatSoundId, 1f, 1f, 1, 0, 1f)
                 }
                 if (
                     LayerPattern.CLOSED_HI_HAT in activeLayers &&
-                    closedHiHatPattern[stepInBar]
+                    repeatingPatternValue(closedHiHatPattern, stepInBar)
                 ) {
                     soundPool.play(closedHiHatSoundId, 1f, 1f, 1, 0, 1f)
                 }
@@ -609,7 +789,8 @@ fun PhaseGameScreen(
             playerProgress = rhythmClock.progressThroughBar(nowMs)
 
             val nextStepTimeMs =
-                rhythmClock.startTimeMs + nextAbsoluteStep * STEP_DURATION_MS
+                rhythmClock.startTimeMs +
+                    nextAbsoluteStep * rhythmClock.stepDurationMs
             delay((nextStepTimeMs - nowMs).coerceIn(1L, 16L))
         }
     }
@@ -648,7 +829,16 @@ fun PhaseGameScreen(
                 targetRhythm =
                     patternQueue.firstOrNull()?.rhythm ?: baseRhythm
             )
-            val judgment = TapJudgment.fromDistance(nearestExpectedHit.distanceMs)
+            val measuredJudgment =
+                TapJudgment.fromDistance(nearestExpectedHit.distanceMs)
+            val judgment = if (
+                perfectModeEnabled &&
+                measuredJudgment != TapJudgment.MISS
+            ) {
+                TapJudgment.PERFECT
+            } else {
+                measuredJudgment
+            }
             tapJudgment = judgment
 
             // A set prevents duplicate taps from satisfying multiple expected notes.
@@ -669,16 +859,37 @@ fun PhaseGameScreen(
                 performance.successfulHitIndices.add(nearestExpectedHit.stepIndex)
             }
 
-            val playerSoundId = when (judgment) {
-                TapJudgment.PERFECT -> perfectSoundId
-                TapJudgment.GOOD -> goodSoundId
-                TapJudgment.CLOSE -> closeSoundId
-                TapJudgment.MISS -> missSoundId
-            }
-            val playbackRate = if (judgment == TapJudgment.MISS) {
-                1f
+            val currentPhase =
+                patternQueue.firstOrNull()?.phaseIndex ?: 0
+            val designedPlayerPitch = if (
+                judgment != TapJudgment.MISS
+            ) {
+                gameDesign?.playerNote(
+                    currentPhase,
+                    nearestExpectedHit.stepIndex
+                )
             } else {
-                playerPitchGenerator.nextPlaybackRate()
+                null
+            }
+            val playerSoundId = if (designedPlayerPitch != null) {
+                designPlayerSoundIds[designedPlayerPitch]
+            } else {
+                when (judgment) {
+                    TapJudgment.PERFECT -> perfectSoundId
+                    TapJudgment.GOOD -> goodSoundId
+                    TapJudgment.CLOSE -> closeSoundId
+                    TapJudgment.MISS -> missSoundId
+                }
+            }
+            val playbackRate = when {
+                judgment == TapJudgment.MISS -> 1f
+                designedPlayerPitch == null ->
+                    playerPitchGenerator.nextPlaybackRate()
+                judgment == TapJudgment.GOOD ->
+                    DESIGN_GOOD_PLAYBACK_RATE
+                judgment == TapJudgment.CLOSE ->
+                    DESIGN_CLOSE_PLAYBACK_RATE
+                else -> 1f
             }
             soundPool.play(
                 playerSoundId,
@@ -699,7 +910,8 @@ fun PhaseGameScreen(
         // Keep the entire 24 dp row plus a 4 dp gap above the input area.
         val playerTravelDistance = maxHeight * 0.6f - 28.dp
         val playAreaMidpoint = maxHeight * 0.3f
-        val cursorX = (-154f + 336f * playerProgress).dp
+        val cursorX =
+            rhythmCursorOffsetDp(playerProgress, baseRhythm.size).dp
         val exponentialFade = (
             (1f - exp(-5f * playerProgress)) /
                 (1f - exp(-5f))
@@ -734,8 +946,12 @@ fun PhaseGameScreen(
             }
 
             val fastSlotsPerStep =
-                (MAX_PATTERN_QUEUE_ITEMS - 1) / STARTUP_QUEUE_PULL_STEPS
-            val slowSlotsPerStep = 1f / REGULAR_QUEUE_PULL_STEPS
+                startupQueueSlotsPerStep(
+                    patternStepCount = baseRhythm.size,
+                    queueItemCount = MAX_PATTERN_QUEUE_ITEMS
+                )
+            val slowSlotsPerStep =
+                regularQueueSlotsPerStep(baseRhythm.size)
             val fastStepsToMidpoint = midpointSlot / fastSlotsPerStep
             val targetSlot =
                 midpointSlot + 1f + lineClearanceSlots
@@ -744,7 +960,9 @@ fun PhaseGameScreen(
             val totalIntroSteps =
                 fastStepsToMidpoint + slowStepsAfterMidpoint
             val introDurationMs =
-                (totalIntroSteps * STEP_DURATION_MS).roundToInt().toLong()
+                (totalIntroSteps * rhythmClock.stepDurationMs)
+                    .roundToInt()
+                    .toLong()
             val introStartMs = SystemClock.elapsedRealtime()
             rhythmClock.scheduleStart(introStartMs + introDurationMs)
 
@@ -752,7 +970,7 @@ fun PhaseGameScreen(
                 val nowMs = SystemClock.elapsedRealtime()
                 val stepsUntilPlayable =
                     (rhythmClock.startTimeMs - nowMs).toFloat() /
-                        STEP_DURATION_MS
+                        rhythmClock.stepDurationMs
                 val elapsedSteps =
                     (totalIntroSteps - stepsUntilPlayable)
                         .coerceIn(0f, totalIntroSteps)
@@ -895,20 +1113,23 @@ fun PhaseGameScreen(
 
 @Composable
 fun RhythmDots(rhythm: List<Boolean>, modifier: Modifier = Modifier) {
+    val dotStride = rhythmDotStrideDp(rhythm.size)
+    val playedDotSize = minOf(18f, dotStride - 4f).dp
+    val silentDotSize = minOf(8f, dotStride - 4f).dp
+
     Row(
         modifier = modifier,
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         rhythm.forEach { isHit ->
             Box(
-                modifier = Modifier.size(24.dp),
+                modifier = Modifier.size(dotStride.dp),
                 contentAlignment = Alignment.Center
             ) {
                 Box(
                     modifier = Modifier
                         .size(
-                            if (isHit) 18.dp else 8.dp
+                            if (isHit) playedDotSize else silentDotSize
                         )
                         .background(
                             color = if (isHit) {
@@ -928,6 +1149,10 @@ fun RhythmDots(rhythm: List<Boolean>, modifier: Modifier = Modifier) {
 @Composable
 fun PhaseGameScreenPreview() {
     PhaseGameTheme {
-        PhaseGameScreen(onGameOver = {})
+        PhaseGameScreen(
+            onGameOver = {},
+            perfectModeEnabled = false,
+            gameDesign = null
+        )
     }
 }
