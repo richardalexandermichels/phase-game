@@ -66,7 +66,7 @@ import kotlin.math.exp
 import kotlin.math.roundToInt
 import kotlin.random.Random
 
-private const val STEP_DURATION_MS = 250L
+internal const val STEP_DURATION_MS = 250L
 private const val INPUT_COMPENSATION_MS = 10L
 private const val PERFECT_WINDOW_MS = 35L
 private const val GOOD_WINDOW_MS = 70L
@@ -289,7 +289,7 @@ private fun findNearestExpectedHit(
  * The phrase repeats before one motif changes, creating hooks without becoming
  * completely predictable.
  */
-private class PopMotifPitchGenerator {
+internal class PopMotifPitchGenerator {
     // Major-pentatonic intervals relative to each sound's generated root.
     // The upper B4 and D5 positions are omitted to keep the melody grounded.
     private val playbackRates = floatArrayOf(
@@ -1045,6 +1045,11 @@ internal fun PhaseGameScreen(
 
             RhythmDots(
                 rhythm = queuedBar.rhythm,
+                playedColor = if (index == 0) {
+                    Color(0xFF00BCD4)
+                } else {
+                    MaterialTheme.colorScheme.primary
+                },
                 modifier = Modifier
                     .align(Alignment.TopCenter)
                     .offset {
@@ -1112,7 +1117,11 @@ internal fun PhaseGameScreen(
 }
 
 @Composable
-fun RhythmDots(rhythm: List<Boolean>, modifier: Modifier = Modifier) {
+fun RhythmDots(
+    rhythm: List<Boolean>,
+    modifier: Modifier = Modifier,
+    playedColor: Color = MaterialTheme.colorScheme.primary
+) {
     val dotStride = rhythmDotStrideDp(rhythm.size)
     val playedDotSize = minOf(18f, dotStride - 4f).dp
     val silentDotSize = minOf(8f, dotStride - 4f).dp
@@ -1133,7 +1142,7 @@ fun RhythmDots(rhythm: List<Boolean>, modifier: Modifier = Modifier) {
                         )
                         .background(
                             color = if (isHit) {
-                                MaterialTheme.colorScheme.primary
+                                playedColor
                             } else {
                                 Color.Gray
                             },
