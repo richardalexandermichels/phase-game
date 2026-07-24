@@ -1,4 +1,4 @@
-package com.example.phasegame.ui.theme
+package com.rmichels.phasegame.ui.theme
 
 import androidx.compose.ui.graphics.Color
 

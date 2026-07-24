@@ -1,4 +1,4 @@
-package com.example.phasegame
+package com.rmichels.phasegame
 
 import org.junit.Assert.assertEquals
 import org.junit.Test

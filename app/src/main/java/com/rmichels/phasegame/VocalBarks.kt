@@ -1,4 +1,4 @@
-package com.example.phasegame
+package com.rmichels.phasegame
 
 /**
  * Named phrases available to the game. Add new phrase arrangements to

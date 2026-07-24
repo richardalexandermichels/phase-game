@@ -1,4 +1,4 @@
-package com.example.phasegame
+package com.rmichels.phasegame
 
 import android.media.AudioAttributes
 import android.media.SoundPool
@@ -60,7 +60,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
-import com.example.phasegame.ui.theme.PhaseGameTheme
+import com.rmichels.phasegame.ui.theme.PhaseGameTheme
 import kotlinx.coroutines.delay
 import kotlin.math.exp
 import kotlin.math.roundToInt
@@ -206,41 +206,77 @@ private fun findNearestExpectedHit(
 }
 
 /**
- * Produces a constrained random walk through pentatonic notes. Directional
- * persistence creates melodic hills and valleys instead of isolated jumps.
+ * Builds an evolving pop phrase from one three-note and one two-note motif.
+ * The phrase repeats before one motif changes, creating hooks without becoming
+ * completely predictable.
  */
-private class ContouredPitchGenerator {
-    // A-major pentatonic tones relative to the 660 Hz player sample.
+private class PopMotifPitchGenerator {
+    // Major-pentatonic intervals relative to each sound's generated root.
+    // The upper B4 and D5 positions are omitted to keep the melody grounded.
     private val playbackRates = floatArrayOf(
-        0.8400f, // C#5
-        1.0000f, // E5
-        1.1212f, // F#5
-        1.3333f, // A5
-        1.4966f, // B5
-        1.6800f, // C#6
-        1.9977f  // E6
+        0.7492f, // A3 when the sample is D4
+        0.8409f, // B3
+        1.0000f, // D4 (root)
+        1.1225f, // E4
+        1.2599f, // F#4
+        1.4983f  // A4
     )
 
-    private var currentIndex = 1
+    private var currentIndex = 2
     private var direction = if (Random.nextBoolean()) 1 else -1
+    private var threeNoteMotif = generateMotif(length = 3)
+    private var twoNoteMotif = generateMotif(length = 2)
+    private var phrase = arrangePhrase()
+    private var phraseIndex = 0
+    private var completedPhraseCount = 0
 
     fun nextPlaybackRate(): Float {
-        val rate = playbackRates[currentIndex]
+        val rate = playbackRates[phrase[phraseIndex]]
+        phraseIndex++
 
-        // Direction usually persists, producing slopes instead of isolated random jumps.
-        if (Random.nextFloat() < 0.20f) {
-            direction *= -1
-        }
+        if (phraseIndex == phrase.size) {
+            phraseIndex = 0
+            completedPhraseCount++
 
-        var nextIndex = currentIndex + direction
-        if (nextIndex !in playbackRates.indices) {
-            direction *= -1
-            nextIndex = currentIndex + direction
+            // Repeat the complete hook twice, then mutate only half of its
+            // musical identity while retaining the other recognizable motif.
+            if (completedPhraseCount % 2 == 0) {
+                if (Random.nextBoolean()) {
+                    threeNoteMotif = generateMotif(length = 3)
+                } else {
+                    twoNoteMotif = generateMotif(length = 2)
+                }
+                phrase = arrangePhrase()
+            }
         }
-        currentIndex = nextIndex
 
         return rate
     }
+
+    private fun generateMotif(length: Int): List<Int> =
+        List(length) {
+            val noteIndex = currentIndex
+
+            // Mostly move by one scale tone; occasional direction changes make
+            // compact melodic arches rather than unrelated random pitches.
+            if (Random.nextFloat() < 0.28f) {
+                direction *= -1
+            }
+            var nextIndex = currentIndex + direction
+            if (nextIndex !in playbackRates.indices) {
+                direction *= -1
+                nextIndex = currentIndex + direction
+            }
+            currentIndex = nextIndex
+            noteIndex
+        }
+
+    // A–A–B–A is a compact electronic-pop hook with repetition and contrast.
+    private fun arrangePhrase(): List<Int> =
+        threeNoteMotif +
+            threeNoteMotif +
+            twoNoteMotif +
+            threeNoteMotif
 }
 
 class MainActivity : ComponentActivity() {
@@ -368,7 +404,10 @@ fun PhaseGameScreen(
         RhythmClock(STEP_DURATION_MS, baseRhythm.size)
     }
     val playerPitchGenerator = remember {
-        ContouredPitchGenerator()
+        PopMotifPitchGenerator()
+    }
+    val basePitchGenerator = remember {
+        PopMotifPitchGenerator()
     }
     val soundPool = remember {
         val audioAttributes = AudioAttributes.Builder()
@@ -452,6 +491,8 @@ fun PhaseGameScreen(
         var nextAbsoluteStep = 0L
         var currentAbsoluteBar = 0L
         var previousStepProgress = 0f
+        var basePlaybackRate = 1f
+        val stepsPerBasePitchSection = baseRhythm.size / 4
         var nextQueuedBar =
             (patternQueue.lastOrNull()?.absoluteBarIndex ?: -1L) + 1L
 
@@ -523,8 +564,19 @@ fun PhaseGameScreen(
 
             while (nextAbsoluteStep <= dueAbsoluteStep) {
                 val stepInBar = (nextAbsoluteStep % baseRhythm.size).toInt()
+                if (stepInBar % stepsPerBasePitchSection == 0) {
+                    basePlaybackRate =
+                        basePitchGenerator.nextPlaybackRate()
+                }
                 if (baseRhythm[stepInBar]) {
-                    soundPool.play(baseSoundId, 1f, 1f, 1, 0, 1f)
+                    soundPool.play(
+                        baseSoundId,
+                        1f,
+                        1f,
+                        1,
+                        0,
+                        basePlaybackRate
+                    )
                 }
                 val activeLayers = layerOrder.take(activeLayerCount)
                 if (
@@ -623,7 +675,11 @@ fun PhaseGameScreen(
                 TapJudgment.CLOSE -> closeSoundId
                 TapJudgment.MISS -> missSoundId
             }
-            val playbackRate = playerPitchGenerator.nextPlaybackRate()
+            val playbackRate = if (judgment == TapJudgment.MISS) {
+                1f
+            } else {
+                playerPitchGenerator.nextPlaybackRate()
+            }
             soundPool.play(
                 playerSoundId,
                 1f,

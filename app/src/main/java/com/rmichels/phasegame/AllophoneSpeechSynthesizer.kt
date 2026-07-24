@@ -1,4 +1,4 @@
-package com.example.phasegame
+package com.rmichels.phasegame
 
 import android.media.AudioAttributes
 import android.media.AudioFormat

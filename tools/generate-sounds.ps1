@@ -5,8 +5,8 @@ $FfmpegPath = "C:\MyDocs\ffmpeg\ffmpeg6_1win64\ffmpeg.exe"
 $SampleRate = 48000
 
 # Shared envelope defaults for pitched sounds.
-$ToneDurationMs = 80.0
-$ToneAttackMs = 3.0
+$ToneDurationMs = 200.0
+$ToneAttackMs = 70.0
 $ToneReleaseMs = 70.0
 
 # Supported waveforms: sine, square, triangle, noise.
@@ -14,15 +14,15 @@ $BasePitchHz = 220.0
 $BaseWaveform = "triangle"
 $BaseVolume = 0.90
 
-$PerfectPitchHz = 660.0
+$PerfectPitchHz = 294.0
 $PerfectWaveform = "triangle"
 $PerfectVolume = 0.50
 
-$GoodPitchHz = 680.00
+$GoodPitchHz = 311.00
 $GoodWaveform = "triangle"
 $GoodVolume = 0.50
 
-$ClosePitchHz = 690.0
+$ClosePitchHz = 330.0
 $CloseWaveform = "triangle"
 $CloseVolume = 0.50
 
