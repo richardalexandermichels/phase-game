@@ -1,7 +1,6 @@
 package com.rmichels.phasegame
 
-import android.media.AudioAttributes
-import android.media.SoundPool
+import android.os.SystemClock
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
@@ -29,21 +28,21 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
+import com.rmichels.phasegame.audio.AudioBus
+import com.rmichels.phasegame.audio.AudioEngine
+import com.rmichels.phasegame.audio.AudioEvent
+import com.rmichels.phasegame.audio.AudioSessionId
+import com.rmichels.phasegame.audio.SoundCatalog
 import kotlin.math.roundToInt
 
 private enum class DesignEditor {
@@ -52,136 +51,125 @@ private enum class DesignEditor {
 }
 
 private val basePitchLabels = listOf(
-    "D2", "E2", "F♯2", "A2", "B2", "D3",
-    "E3", "F♯3", "A3", "B3", "D4", "E4"
+    "D2", "E2", "F♯2", "G2", "A2", "B2",
+    "C♯3", "D3", "E3", "F♯3", "G3", "A3"
 )
 
 private val playerPitchLabels = listOf(
-    "D3", "E3", "F♯3", "A3", "B3", "D4",
-    "E4", "F♯4", "A4", "B4", "D5", "E5"
+    "D3", "E3", "F♯3", "G3", "A3", "B3",
+    "C♯4", "D4", "E4", "F♯4", "G4", "A4"
 )
 
 @Composable
 internal fun DesignScreen(
+    audioEngine: AudioEngine,
     design: GameDesign,
     onDesignChange: (GameDesign) -> Unit,
     onPlay: () -> Unit,
     onReturnToTitle: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val context = LocalContext.current
-    val previewScope = rememberCoroutineScope()
     var editor by rememberSaveable { mutableStateOf(DesignEditor.BASE) }
     var phaseIndex by rememberSaveable { mutableIntStateOf(0) }
     var pageIndex by rememberSaveable { mutableIntStateOf(0) }
-    var previewJob by remember { mutableStateOf<Job?>(null) }
-    val previewSoundPool = remember {
-        val attributes = AudioAttributes.Builder()
-            .setUsage(AudioAttributes.USAGE_GAME)
-            .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-            .build()
-        SoundPool.Builder()
-            .setMaxStreams(4)
-            .setAudioAttributes(attributes)
-            .build()
+    val auditionSession = remember(audioEngine) {
+        audioEngine.createSession()
     }
-    val previewBaseSoundIds = remember {
-        IntArray(DESIGN_PITCH_COUNT)
+    var previewSession by remember {
+        mutableStateOf<AudioSessionId?>(null)
     }
-    val previewPlayerSoundIds = remember {
-        IntArray(DESIGN_PITCH_COUNT)
-    }
-    var previewFallbackSoundId by remember { mutableIntStateOf(0) }
-    var loadedPreviewSoundCount by remember { mutableIntStateOf(0) }
-    val expectedPreviewSoundCount =
-        DESIGN_BASE_SOUND_RESOURCES.size +
-            DESIGN_PLAYER_SOUND_RESOURCES.size + 1
-    val isPreviewAudioReady =
-        loadedPreviewSoundCount == expectedPreviewSoundCount
-    val previewFallbackPitchGenerator = remember {
-        PopMotifPitchGenerator()
+    val isPreviewAudioReady = audioEngine.isReady
+    val previewPhaseMelody = remember(design.stepCount) {
+        PopRockPhaseMelody(design.stepCount)
     }
 
-    DisposableEffect(previewSoundPool, context) {
-        previewSoundPool.setOnLoadCompleteListener { _, _, status ->
-            if (status == 0) {
-                loadedPreviewSoundCount++
-            }
-        }
-        DESIGN_BASE_SOUND_RESOURCES.forEachIndexed { index, resourceId ->
-            previewBaseSoundIds[index] =
-                previewSoundPool.load(context, resourceId, 1)
-        }
-        DESIGN_PLAYER_SOUND_RESOURCES.forEachIndexed { index, resourceId ->
-            previewPlayerSoundIds[index] =
-                previewSoundPool.load(context, resourceId, 1)
-        }
-        previewFallbackSoundId =
-            previewSoundPool.load(context, R.raw.player_perfect, 1)
-
+    DisposableEffect(audioEngine, auditionSession) {
         onDispose {
-            previewJob?.cancel()
-            previewSoundPool.setOnLoadCompleteListener(null)
-            previewSoundPool.release()
+            previewSession?.let(audioEngine::cancelSession)
+            audioEngine.cancelSession(auditionSession)
         }
     }
 
     fun auditionPitch(pitch: Int) {
         if (!isPreviewAudioReady) return
-        val soundId = if (editor == DesignEditor.BASE) {
-            previewBaseSoundIds[pitch]
+        val sampleId = if (editor == DesignEditor.BASE) {
+            SoundCatalog.designBase[pitch]
         } else {
-            previewPlayerSoundIds[pitch]
+            SoundCatalog.designPlayer[pitch]
         }
-        previewSoundPool.play(soundId, 1f, 1f, 1, 0, 1f)
+        audioEngine.playImmediate(
+            sampleId = sampleId,
+            bus = if (editor == DesignEditor.BASE) {
+                AudioBus.BASE
+            } else {
+                AudioBus.PLAYER
+            },
+            sessionId = auditionSession,
+            priority = 2
+        )
     }
 
     fun previewCurrentBar() {
         if (!isPreviewAudioReady) return
-        previewJob?.cancel()
-        previewJob = previewScope.launch {
-            for (step in 0 until design.stepCount) {
-                when (editor) {
-                    DesignEditor.BASE -> {
-                        design.baseNotes[step]?.let { pitch ->
-                            previewSoundPool.play(
-                                previewBaseSoundIds[pitch],
-                                1f,
-                                1f,
-                                1,
-                                0,
-                                1f
+        previewSession?.let(audioEngine::cancelSession)
+        val session = audioEngine.createSession()
+        previewSession = session
+        val startNanos = SystemClock.elapsedRealtimeNanos() + 30_000_000L
+        previewPhaseMelody.selectPhase(phaseIndex)
+        for (step in 0 until design.stepCount) {
+            val targetNanos =
+                startNanos + step * STEP_DURATION_MS * 1_000_000L
+            when (editor) {
+                DesignEditor.BASE -> {
+                    design.baseNotes[step].forEach { pitch ->
+                        audioEngine.schedule(
+                            AudioEvent(
+                                sampleId = SoundCatalog.designBase[pitch],
+                                targetElapsedRealtimeNanos = targetNanos,
+                                bus = AudioBus.BASE,
+                                sessionId = session,
+                                priority = 1
                             )
-                        }
+                        )
                     }
-                    DesignEditor.PLAYER -> {
-                        if (design.enabledPlayerColumns(phaseIndex)[step]) {
-                            val pitch =
-                                design.playerNotesByPhase[phaseIndex][step]
-                            if (pitch == null) {
-                                previewSoundPool.play(
-                                    previewFallbackSoundId,
-                                    1f,
-                                    1f,
-                                    1,
-                                    0,
-                                    previewFallbackPitchGenerator
-                                        .nextPlaybackRate()
+                }
+                DesignEditor.PLAYER -> {
+                    if (design.enabledPlayerColumns(phaseIndex)[step]) {
+                        val pitches =
+                            design.playerNotesByPhase[phaseIndex][step]
+                        if (pitches.isEmpty()) {
+                            audioEngine.schedule(
+                                AudioEvent(
+                                    sampleId = SoundCatalog.PLAYER_PERFECT,
+                                    targetElapsedRealtimeNanos = targetNanos,
+                                    bus = AudioBus.PLAYER,
+                                    sessionId = session,
+                                    playbackRate =
+                                        previewPhaseMelody
+                                            .playbackRateForPlayerStep(
+                                                step,
+                                                phaseIndex
+                                            ),
+                                    priority = 2
                                 )
-                            } else {
-                                previewSoundPool.play(
-                                    previewPlayerSoundIds[pitch],
-                                    1f,
-                                    1f,
-                                    1,
-                                    0,
-                                    1f
+                            )
+                        } else {
+                            pitches.forEach { pitch ->
+                                audioEngine.schedule(
+                                    AudioEvent(
+                                        sampleId =
+                                            SoundCatalog.designPlayer[pitch],
+                                        targetElapsedRealtimeNanos =
+                                            targetNanos,
+                                        bus = AudioBus.PLAYER,
+                                        sessionId = session,
+                                        priority = 2
+                                    )
                                 )
                             }
                         }
                     }
                 }
-                delay(STEP_DURATION_MS)
             }
         }
     }
@@ -285,7 +273,7 @@ internal fun DesignScreen(
         } else {
             Spacer(modifier = Modifier.height(8.dp))
             Text(
-                text = "Tap a pitch to enable a step",
+                text = "Tap up to $DESIGN_MAX_CHORD_SIZE pitches per step",
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
@@ -444,12 +432,12 @@ private fun ToneMatrix(
 
                 visibleColumns.forEach { step ->
                     val enabled = enabledColumns[step]
-                    val selectedPitch = when (editor) {
+                    val selectedPitches = when (editor) {
                         DesignEditor.BASE -> design.baseNotes[step]
                         DesignEditor.PLAYER ->
                             design.playerNotesByPhase[phaseIndex][step]
                     }
-                    val isSelected = selectedPitch == pitch
+                    val isSelected = pitch in selectedPitches
                     val backgroundColor = when {
                         !enabled -> MaterialTheme.colorScheme.surfaceVariant.copy(
                             alpha = 0.35f
@@ -605,21 +593,23 @@ private fun ToneMatrix(
                                 )
                             }
                             .clickable(enabled = enabled) {
-                                val nextPitch =
-                                    if (isSelected) null else pitch
                                 val updatedDesign = when (editor) {
                                     DesignEditor.BASE ->
-                                        design.withBaseNote(step, nextPitch)
+                                        design.toggledBasePitch(step, pitch)
                                     DesignEditor.PLAYER ->
-                                        design.withPlayerNote(
+                                        design.toggledPlayerPitch(
                                             phaseIndex,
                                             step,
-                                            nextPitch
+                                            pitch
                                         )
                                 }
                                 onDesignChange(updatedDesign)
-                                if (nextPitch != null) {
-                                    onAuditionPitch(nextPitch)
+                                if (
+                                    !isSelected &&
+                                    selectedPitches.size <
+                                        DESIGN_MAX_CHORD_SIZE
+                                ) {
+                                    onAuditionPitch(pitch)
                                 }
                             }
                     )

@@ -1,5 +1,26 @@
 # Beat Phaser: Low-Latency Audio Engine Project Brief
 
+## Implementation Status (July 24, 2026)
+
+Implemented in the current worktree:
+
+- One activity-owned Oboe 1.10.0 engine replaces both `SoundPool` instances and
+  the title `AudioTrack`.
+- All short WAVs and rendered allophone PCM are registered before playback.
+- A bounded lock-free command queue feeds a preallocated 48-voice mixer.
+- Events use elapsed-realtime nanosecond timestamps; callback block timing maps
+  them to frame offsets and rejects events more than 40 ms late.
+- Linear interpolation, gain/pan, optional attack/release, deterministic voice
+  stealing, sessions, bus/master gains, diagnostics, and stream recovery exist.
+- `GameAudioConductor` schedules base and percussion independently of Compose.
+- Gameplay, Design preview/audition, and voice playback share the catalog.
+- The design model supports ordered chords of up to four pitches, with a
+  versioned saver that also restores legacy monophonic state.
+
+Unit, native ABI, APK, and lint builds pass. Pixel 8a hands-on latency, jitter,
+underrun, route-change, and multi-minute phase-lock acceptance testing remains
+required before calling the migration production-validated.
+
 ## Objective
 
 Replace the two independent `SoundPool` implementations with one dedicated
@@ -155,4 +176,3 @@ app/src/main/cpp/CMakeLists.txt
 Gradle will need Android native/CMake configuration and the selected Oboe
 dependency/integration. Avoid committing to a library version without checking
 the current official Android guidance at implementation time.
-

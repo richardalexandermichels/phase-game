@@ -1,7 +1,5 @@
 package com.rmichels.phasegame
 
-import android.media.AudioAttributes
-import android.media.SoundPool
 import android.os.Bundle
 import android.os.SystemClock
 import androidx.activity.ComponentActivity
@@ -52,7 +50,6 @@ import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
@@ -61,12 +58,18 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import com.rmichels.phasegame.ui.theme.PhaseGameTheme
+import com.rmichels.phasegame.audio.AudioBus
+import com.rmichels.phasegame.audio.AudioEngine
+import com.rmichels.phasegame.audio.DefaultAudioMix
+import com.rmichels.phasegame.audio.activeBackingTrackMaxTier
+import com.rmichels.phasegame.audio.activeBackingTrackStepDurationMs
+import com.rmichels.phasegame.audio.NativeAudioEngine
+import com.rmichels.phasegame.audio.SoundCatalog
 import kotlinx.coroutines.delay
 import kotlin.math.exp
 import kotlin.math.roundToInt
-import kotlin.random.Random
 
-internal const val STEP_DURATION_MS = 250L
+internal val STEP_DURATION_MS = activeBackingTrackStepDurationMs
 private const val INPUT_COMPENSATION_MS = 10L
 private const val PERFECT_WINDOW_MS = 35L
 private const val GOOD_WINDOW_MS = 70L
@@ -76,7 +79,6 @@ private const val MAX_PATTERN_QUEUE_ITEMS = 11
 private const val MISS_QUEUE_RAISE_SLOTS = 0.25f
 internal const val MIN_PATTERN_STEPS = 2
 internal const val MAX_PATTERN_STEPS = 16
-private const val BASE_PITCH_SECTIONS = 4
 private const val DEFAULT_RHYTHM_DOT_STRIDE_DP = 28f
 private const val MAX_RHYTHM_WIDTH_DP = 336f
 private const val QUEUE_FALL_SLOTS_PER_BAR = 1.2f
@@ -152,24 +154,6 @@ internal fun validateBaseRhythm(rhythm: List<Boolean>): List<Boolean> {
     return rhythm
 }
 
-internal fun repeatingPatternValue(pattern: List<Boolean>, stepIndex: Int): Boolean {
-    require(pattern.isNotEmpty())
-    return pattern[Math.floorMod(stepIndex, pattern.size)]
-}
-
-internal fun pitchSectionForStep(
-    stepIndex: Int,
-    stepsPerBar: Int,
-    sectionCount: Int = BASE_PITCH_SECTIONS
-): Int {
-    require(stepIndex in 0 until stepsPerBar)
-    require(stepsPerBar > 0)
-    require(sectionCount > 0)
-    return ((stepIndex.toLong() * sectionCount) / stepsPerBar)
-        .toInt()
-        .coerceAtMost(sectionCount - 1)
-}
-
 internal fun startupQueueSlotsPerStep(
     patternStepCount: Int,
     queueItemCount: Int
@@ -218,13 +202,6 @@ private enum class TapJudgment(val label: String) {
             else -> MISS
         }
     }
-}
-
-private enum class LayerPattern {
-    BASS_DRUM,
-    SNARE,
-    OPEN_HI_HAT,
-    CLOSED_HI_HAT
 }
 
 private enum class AppScreen {
@@ -284,83 +261,23 @@ private fun findNearestExpectedHit(
         .minBy { it.distanceMs }
 }
 
-/**
- * Builds an evolving pop phrase from one three-note and one two-note motif.
- * The phrase repeats before one motif changes, creating hooks without becoming
- * completely predictable.
- */
-internal class PopMotifPitchGenerator {
-    // Major-pentatonic intervals relative to each sound's generated root.
-    // The upper B4 and D5 positions are omitted to keep the melody grounded.
-    private val playbackRates = floatArrayOf(
-        0.7492f, // A3 when the sample is D4
-        0.8409f, // B3
-        1.0000f, // D4 (root)
-        1.1225f, // E4
-        1.2599f, // F#4
-        1.4983f  // A4
-    )
-
-    private var currentIndex = 2
-    private var direction = if (Random.nextBoolean()) 1 else -1
-    private var threeNoteMotif = generateMotif(length = 3)
-    private var twoNoteMotif = generateMotif(length = 2)
-    private var phrase = arrangePhrase()
-    private var phraseIndex = 0
-    private var completedPhraseCount = 0
-
-    fun nextPlaybackRate(): Float {
-        val rate = playbackRates[phrase[phraseIndex]]
-        phraseIndex++
-
-        if (phraseIndex == phrase.size) {
-            phraseIndex = 0
-            completedPhraseCount++
-
-            // Repeat the complete hook twice, then mutate only half of its
-            // musical identity while retaining the other recognizable motif.
-            if (completedPhraseCount % 2 == 0) {
-                if (Random.nextBoolean()) {
-                    threeNoteMotif = generateMotif(length = 3)
-                } else {
-                    twoNoteMotif = generateMotif(length = 2)
-                }
-                phrase = arrangePhrase()
-            }
-        }
-
-        return rate
-    }
-
-    private fun generateMotif(length: Int): List<Int> =
-        List(length) {
-            val noteIndex = currentIndex
-
-            // Mostly move by one scale tone; occasional direction changes make
-            // compact melodic arches rather than unrelated random pitches.
-            if (Random.nextFloat() < 0.28f) {
-                direction *= -1
-            }
-            var nextIndex = currentIndex + direction
-            if (nextIndex !in playbackRates.indices) {
-                direction *= -1
-                nextIndex = currentIndex + direction
-            }
-            currentIndex = nextIndex
-            noteIndex
-        }
-
-    // A–A–B–A is a compact electronic-pop hook with repetition and contrast.
-    private fun arrangePhrase(): List<Int> =
-        threeNoteMotif +
-            threeNoteMotif +
-            twoNoteMotif +
-            threeNoteMotif
-}
-
 class MainActivity : ComponentActivity() {
+    private lateinit var audioEngine: NativeAudioEngine
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        audioEngine = NativeAudioEngine(this).also { engine ->
+            engine.prepare()
+            engine.registerPcm16(
+                sampleId = SoundCatalog.TITLE_VOICE,
+                sampleRate = AllophoneSpeechSynthesizer.SAMPLE_RATE,
+                samples = AllophoneSpeechSynthesizer.renderPcm(
+                    VocalBark.BEAT_PHASER
+                )
+            )
+            DefaultAudioMix.applyTo(engine)
+            engine.start()
+        }
         enableEdgeToEdge()
         setContent {
             PhaseGameTheme {
@@ -387,6 +304,7 @@ class MainActivity : ComponentActivity() {
 
                     when (appScreen) {
                         AppScreen.TITLE -> TitleScreen(
+                            audioEngine = audioEngine,
                             onStart = { appScreen = AppScreen.PLAYING },
                             onOpenDesign = { appScreen = AppScreen.DESIGN },
                             perfectModeEnabled = perfectModeEnabled,
@@ -396,6 +314,7 @@ class MainActivity : ComponentActivity() {
                             modifier = Modifier.padding(innerPadding)
                         )
                         AppScreen.DESIGN -> DesignScreen(
+                            audioEngine = audioEngine,
                             design = draftDesign,
                             onDesignChange = { updatedDesign ->
                                 draftDesign = updatedDesign
@@ -411,6 +330,7 @@ class MainActivity : ComponentActivity() {
                             modifier = Modifier.padding(innerPadding)
                         )
                         AppScreen.PLAYING -> PhaseGameScreen(
+                            audioEngine = audioEngine,
                             onGameOver = { appScreen = AppScreen.GAME_OVER },
                             perfectModeEnabled = perfectModeEnabled,
                             gameDesign = committedDesign.takeIf {
@@ -427,25 +347,48 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+
+    override fun onStart() {
+        super.onStart()
+        if (::audioEngine.isInitialized) audioEngine.start()
+    }
+
+    override fun onStop() {
+        if (::audioEngine.isInitialized) audioEngine.stop()
+        super.onStop()
+    }
+
+    override fun onDestroy() {
+        if (::audioEngine.isInitialized) audioEngine.release()
+        super.onDestroy()
+    }
 }
 
 @Composable
-fun TitleScreen(
+internal fun TitleScreen(
+    audioEngine: AudioEngine?,
     onStart: () -> Unit,
     onOpenDesign: () -> Unit,
     perfectModeEnabled: Boolean,
     onTogglePerfectMode: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val titleVoiceTrack = remember {
-        AllophoneSpeechSynthesizer.createTrack(VocalBark.BEAT_PHASER)
+    val voiceSession = remember(audioEngine) {
+        audioEngine?.createSession()
     }
 
-    DisposableEffect(titleVoiceTrack) {
-        AllophoneSpeechSynthesizer.playFromStart(titleVoiceTrack)
+    DisposableEffect(audioEngine, voiceSession) {
+        if (voiceSession != null) {
+            audioEngine?.playImmediate(
+                sampleId = SoundCatalog.TITLE_VOICE,
+                bus = AudioBus.VOICE,
+                sessionId = voiceSession,
+                priority = 1
+            )
+        }
 
         onDispose {
-            titleVoiceTrack.release()
+            if (voiceSession != null) audioEngine?.cancelSession(voiceSession)
         }
     }
 
@@ -509,12 +452,12 @@ fun GameOverScreen(
 
 @Composable
 internal fun PhaseGameScreen(
+    audioEngine: AudioEngine?,
     onGameOver: () -> Unit,
     perfectModeEnabled: Boolean,
     gameDesign: GameDesign?,
     modifier: Modifier = Modifier
 ) {
-    val context = LocalContext.current
     val baseRhythm = remember(gameDesign) {
         gameDesign?.baseRhythm ?: validateBaseRhythm(
             listOf(
@@ -525,48 +468,49 @@ internal fun PhaseGameScreen(
             )
         )
     }
-    val bassDrumPattern = remember {
-        listOf(true, false, false, false, true, false, false, false, true, false, false, false)
-    }
-    val snarePattern = remember {
-        listOf(false, false, true, false, false, false, true, false, false, false, true, false)
-    }
-    val openHiHatPattern = remember {
-        listOf(false, true, false, true, false, true, false, true, false, true, false, true)
-    }
-    val closedHiHatPattern = remember {
-        listOf(false, false, false, false, false, false, false, false, false, false, false, false)
-    }
-    // Change this list to control which layer patterns enter and in what order.
-    val layerOrder = remember {
-        listOf(
-            LayerPattern.BASS_DRUM,
-            LayerPattern.SNARE,
-            LayerPattern.OPEN_HI_HAT
-        )
-    }
+    val maximumBackingTier = activeBackingTrackMaxTier
     val rhythmClock = remember {
         RhythmClock(
             stepDurationMs = STEP_DURATION_MS,
             stepsPerBar = baseRhythm.size
         )
     }
-    val playerPitchGenerator = remember {
-        PopMotifPitchGenerator()
+    val phaseMelody = remember(baseRhythm.size) {
+        PopRockPhaseMelody(baseRhythm.size)
     }
-    val basePitchGenerator = remember {
-        PopMotifPitchGenerator()
+    val baseAudioSession = remember(audioEngine) {
+        audioEngine?.createSession()
     }
-    val soundPool = remember {
-        val audioAttributes = AudioAttributes.Builder()
-            .setUsage(AudioAttributes.USAGE_GAME)
-            .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-            .build()
-
-        SoundPool.Builder()
-            .setMaxStreams(8)
-            .setAudioAttributes(audioAttributes)
-            .build()
+    val percussionAudioSession = remember(audioEngine) {
+        audioEngine?.createSession()
+    }
+    val playerAudioSession = remember(audioEngine) {
+        audioEngine?.createSession()
+    }
+    val audioConductor = remember(
+        audioEngine,
+        baseAudioSession,
+        percussionAudioSession,
+        baseRhythm,
+        gameDesign,
+        phaseMelody
+    ) {
+        if (
+            audioEngine != null &&
+            baseAudioSession != null &&
+            percussionAudioSession != null
+        ) {
+            GameAudioConductor(
+                audioEngine = audioEngine,
+                baseSession = baseAudioSession,
+                percussionSession = percussionAudioSession,
+                baseRhythm = baseRhythm,
+                gameDesign = gameDesign,
+                phaseMelody = phaseMelody
+            )
+        } else {
+            null
+        }
     }
     var playerProgress by remember { mutableFloatStateOf(0f) }
     var introCurrentSlot by remember { mutableFloatStateOf(0f) }
@@ -576,59 +520,53 @@ internal fun PhaseGameScreen(
     var startCueText by remember { mutableStateOf<String?>(null) }
     val patternQueue = remember { mutableStateListOf<QueuedPatternBar>() }
     val isMetronomePlaying = true
-    var baseSoundId by remember { mutableIntStateOf(0) }
-    var perfectSoundId by remember { mutableIntStateOf(0) }
-    var goodSoundId by remember { mutableIntStateOf(0) }
-    var closeSoundId by remember { mutableIntStateOf(0) }
-    var missSoundId by remember { mutableIntStateOf(0) }
-    var bassDrumSoundId by remember { mutableIntStateOf(0) }
-    var snareSoundId by remember { mutableIntStateOf(0) }
-    var openHiHatSoundId by remember { mutableIntStateOf(0) }
-    var closedHiHatSoundId by remember { mutableIntStateOf(0) }
-    val designBaseSoundIds = remember {
-        IntArray(DESIGN_PITCH_COUNT)
-    }
-    val designPlayerSoundIds = remember {
-        IntArray(DESIGN_PITCH_COUNT)
-    }
-    var loadedSoundCount by remember { mutableIntStateOf(0) }
-    val expectedLoadedSoundCount =
-        9 + DESIGN_BASE_SOUND_RESOURCES.size +
-            DESIGN_PLAYER_SOUND_RESOURCES.size
-    val isAudioLoaded = loadedSoundCount == expectedLoadedSoundCount
+    val isAudioLoaded = audioEngine?.isReady == true
     var tapJudgment by remember { mutableStateOf<TapJudgment?>(null) }
     var activeLayerCount by remember { mutableIntStateOf(0) }
+    val currentAudioPhase =
+        patternQueue.firstOrNull()?.phaseIndex ?: 0
     val barPerformances = remember {
         mutableMapOf<Long, BarPerformance>()
     }
 
-    DisposableEffect(soundPool, context) {
-        soundPool.setOnLoadCompleteListener { _, _, status ->
-            if (status == 0) {
-                loadedSoundCount++
+    DisposableEffect(
+        audioEngine,
+        baseAudioSession,
+        percussionAudioSession,
+        playerAudioSession
+    ) {
+        onDispose {
+            audioConductor?.release()
+            if (baseAudioSession != null) {
+                audioEngine?.cancelSession(baseAudioSession)
+            }
+            if (percussionAudioSession != null) {
+                audioEngine?.cancelSession(percussionAudioSession)
+            }
+            if (playerAudioSession != null) {
+                audioEngine?.cancelSession(playerAudioSession)
             }
         }
-        baseSoundId = soundPool.load(context, R.raw.player_click, 1)
-        perfectSoundId = soundPool.load(context, R.raw.player_perfect, 1)
-        goodSoundId = soundPool.load(context, R.raw.player_good, 1)
-        closeSoundId = soundPool.load(context, R.raw.player_close, 1)
-        missSoundId = soundPool.load(context, R.raw.player_miss, 1)
-        bassDrumSoundId = soundPool.load(context, R.raw.bass_drum, 1)
-        snareSoundId = soundPool.load(context, R.raw.snare, 1)
-        openHiHatSoundId = soundPool.load(context, R.raw.open_hi_hat, 1)
-        closedHiHatSoundId = soundPool.load(context, R.raw.closed_hi_hat, 1)
-        DESIGN_BASE_SOUND_RESOURCES.forEachIndexed { index, resourceId ->
-            designBaseSoundIds[index] =
-                soundPool.load(context, resourceId, 1)
-        }
-        DESIGN_PLAYER_SOUND_RESOURCES.forEachIndexed { index, resourceId ->
-            designPlayerSoundIds[index] =
-                soundPool.load(context, resourceId, 1)
-        }
+    }
 
-        onDispose {
-            soundPool.setOnLoadCompleteListener(null)
-            soundPool.release()
+    LaunchedEffect(activeLayerCount, audioConductor) {
+        audioConductor?.setActiveLayerCount(activeLayerCount)
+    }
+
+    LaunchedEffect(currentAudioPhase, phaseMelody) {
+        phaseMelody.selectPhase(currentAudioPhase)
+    }
+
+    LaunchedEffect(
+        isGameplayActive,
+        isMetronomePlaying,
+        isAudioLoaded,
+        audioConductor
+    ) {
+        if (isGameplayActive && isMetronomePlaying && isAudioLoaded) {
+            audioConductor?.start(rhythmClock.startTimeMs)
+        } else {
+            audioConductor?.stop()
         }
     }
 
@@ -654,19 +592,14 @@ internal fun PhaseGameScreen(
             return@LaunchedEffect
         }
 
-        var nextAbsoluteStep = 0L
         var currentAbsoluteBar = 0L
         var previousStepProgress = 0f
-        var basePlaybackRate = 1f
-        var currentBasePitchSection = -1
         var nextQueuedBar =
             (patternQueue.lastOrNull()?.absoluteBarIndex ?: -1L) + 1L
 
         while (isGameplayActive && isMetronomePlaying && isAudioLoaded) {
             val nowMs = SystemClock.elapsedRealtime()
             val elapsedMs = rhythmClock.elapsedMs(nowMs)
-            val dueAbsoluteStep =
-                elapsedMs / rhythmClock.stepDurationMs
             val absoluteBar = rhythmClock.absoluteBarIndex(nowMs)
             val newStepProgress =
                 elapsedMs.toFloat() / rhythmClock.stepDurationMs
@@ -696,7 +629,7 @@ internal fun PhaseGameScreen(
                             performance.successfulHitIndices.size == requiredHits
 
                     activeLayerCount = if (completedWithoutMisses) {
-                        minOf(activeLayerCount + 1, layerOrder.size)
+                        minOf(activeLayerCount + 1, maximumBackingTier)
                     } else {
                         0
                     }
@@ -726,72 +659,8 @@ internal fun PhaseGameScreen(
                 currentAbsoluteBar = absoluteBar
             }
 
-            // A long UI stall must not replay every stale sound in a rapid burst.
-            if (dueAbsoluteStep - nextAbsoluteStep > 1L) {
-                nextAbsoluteStep = dueAbsoluteStep
-            }
-
-            while (nextAbsoluteStep <= dueAbsoluteStep) {
-                val stepInBar = (nextAbsoluteStep % baseRhythm.size).toInt()
-                val basePitchSection =
-                    pitchSectionForStep(stepInBar, baseRhythm.size)
-                if (basePitchSection != currentBasePitchSection) {
-                    currentBasePitchSection = basePitchSection
-                    basePlaybackRate =
-                        basePitchGenerator.nextPlaybackRate()
-                }
-                if (baseRhythm[stepInBar]) {
-                    val designedBasePitch =
-                        gameDesign?.baseNotes?.get(stepInBar)
-                    soundPool.play(
-                        designedBasePitch?.let { pitch ->
-                            designBaseSoundIds[pitch]
-                        } ?: baseSoundId,
-                        1f,
-                        1f,
-                        1,
-                        0,
-                        if (designedBasePitch == null) {
-                            basePlaybackRate
-                        } else {
-                            1f
-                        }
-                    )
-                }
-                val activeLayers = layerOrder.take(activeLayerCount)
-                if (
-                    LayerPattern.BASS_DRUM in activeLayers &&
-                    repeatingPatternValue(bassDrumPattern, stepInBar)
-                ) {
-                    soundPool.play(bassDrumSoundId, 1f, 1f, 1, 0, 1f)
-                }
-                if (
-                    LayerPattern.SNARE in activeLayers &&
-                    repeatingPatternValue(snarePattern, stepInBar)
-                ) {
-                    soundPool.play(snareSoundId, 1f, 1f, 1, 0, 1f)
-                }
-                if (
-                    LayerPattern.OPEN_HI_HAT in activeLayers &&
-                    repeatingPatternValue(openHiHatPattern, stepInBar)
-                ) {
-                    soundPool.play(openHiHatSoundId, 1f, 1f, 1, 0, 1f)
-                }
-                if (
-                    LayerPattern.CLOSED_HI_HAT in activeLayers &&
-                    repeatingPatternValue(closedHiHatPattern, stepInBar)
-                ) {
-                    soundPool.play(closedHiHatSoundId, 1f, 1f, 1, 0, 1f)
-                }
-                nextAbsoluteStep++
-            }
-
             playerProgress = rhythmClock.progressThroughBar(nowMs)
-
-            val nextStepTimeMs =
-                rhythmClock.startTimeMs +
-                    nextAbsoluteStep * rhythmClock.stepDurationMs
-            delay((nextStepTimeMs - nowMs).coerceIn(1L, 16L))
+            delay(16L)
         }
     }
 
@@ -809,14 +678,16 @@ internal fun PhaseGameScreen(
         }
 
         if (!isGameplayActive || !rhythmClock.isStarted) {
-            soundPool.play(
-                perfectSoundId,
-                1f,
-                1f,
-                1,
-                0,
-                playerPitchGenerator.nextPlaybackRate()
-            )
+            if (playerAudioSession != null) {
+                audioEngine?.playImmediate(
+                    sampleId = SoundCatalog.PLAYER_PERFECT,
+                    bus = AudioBus.PLAYER,
+                    sessionId = playerAudioSession,
+                    playbackRate =
+                        phaseMelody.playbackRateForBaseStep(0),
+                    priority = 3
+                )
+            }
             return@press
         }
 
@@ -850,6 +721,7 @@ internal fun PhaseGameScreen(
             if (judgment == TapJudgment.MISS) {
                 performance.hadMiss = true
                 activeLayerCount = 0
+                audioConductor?.cancelFuturePercussion()
                 introCurrentSlot =
                     (introCurrentSlot - MISS_QUEUE_RAISE_SLOTS)
                         .coerceAtLeast(0f)
@@ -861,44 +733,61 @@ internal fun PhaseGameScreen(
 
             val currentPhase =
                 patternQueue.firstOrNull()?.phaseIndex ?: 0
-            val designedPlayerPitch = if (
+            val designedPlayerPitches = if (
                 judgment != TapJudgment.MISS
             ) {
-                gameDesign?.playerNote(
+                gameDesign?.playerNotes(
                     currentPhase,
                     nearestExpectedHit.stepIndex
                 )
             } else {
                 null
             }
-            val playerSoundId = if (designedPlayerPitch != null) {
-                designPlayerSoundIds[designedPlayerPitch]
-            } else {
-                when (judgment) {
-                    TapJudgment.PERFECT -> perfectSoundId
-                    TapJudgment.GOOD -> goodSoundId
-                    TapJudgment.CLOSE -> closeSoundId
-                    TapJudgment.MISS -> missSoundId
-                }
-            }
+            phaseMelody.selectPhase(currentPhase)
             val playbackRate = when {
                 judgment == TapJudgment.MISS -> 1f
-                designedPlayerPitch == null ->
-                    playerPitchGenerator.nextPlaybackRate()
+                designedPlayerPitches.isNullOrEmpty() ->
+                    phaseMelody.playbackRateForPlayerStep(
+                        nearestExpectedHit.stepIndex,
+                        currentPhase
+                    )
                 judgment == TapJudgment.GOOD ->
                     DESIGN_GOOD_PLAYBACK_RATE
                 judgment == TapJudgment.CLOSE ->
                     DESIGN_CLOSE_PLAYBACK_RATE
                 else -> 1f
             }
-            soundPool.play(
-                playerSoundId,
-                1f,
-                1f,
-                1,
-                0,
-                if (judgment == TapJudgment.MISS) 1f else playbackRate
-            )
+            if (playerAudioSession != null) {
+                if (designedPlayerPitches.isNullOrEmpty()) {
+                    val sampleId = when (judgment) {
+                        TapJudgment.PERFECT -> SoundCatalog.PLAYER_PERFECT
+                        TapJudgment.GOOD -> SoundCatalog.PLAYER_GOOD
+                        TapJudgment.CLOSE -> SoundCatalog.PLAYER_CLOSE
+                        TapJudgment.MISS -> SoundCatalog.PLAYER_MISS
+                    }
+                    audioEngine?.playImmediate(
+                        sampleId = sampleId,
+                        bus = AudioBus.PLAYER,
+                        sessionId = playerAudioSession,
+                        playbackRate = if (judgment == TapJudgment.MISS) {
+                            1f
+                        } else {
+                            playbackRate
+                        },
+                        priority = 3
+                    )
+                } else {
+                    designedPlayerPitches.forEach { pitch ->
+                        audioEngine?.playImmediate(
+                            sampleId = SoundCatalog.designPlayer[pitch],
+                            bus = AudioBus.PLAYER,
+                            sessionId = playerAudioSession,
+                            playbackRate = playbackRate,
+                            priority = 3
+                        )
+                    }
+                }
+            }
         }
     }
 
@@ -1159,6 +1048,7 @@ fun RhythmDots(
 fun PhaseGameScreenPreview() {
     PhaseGameTheme {
         PhaseGameScreen(
+            audioEngine = null,
             onGameOver = {},
             perfectModeEnabled = false,
             gameDesign = null

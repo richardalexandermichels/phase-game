@@ -4,27 +4,28 @@
 $FfmpegPath = "C:\MyDocs\ffmpeg\ffmpeg6_1win64\ffmpeg.exe"
 $SampleRate = 48000
 
-# Shared envelope defaults for pitched sounds.
-$ToneDurationMs = 200.0
-$ToneAttackMs = 70.0
-$ToneReleaseMs = 70.0
+# Shared short envelope for clean, PICO-8-like triangle notes.
+$ToneDurationMs = 300.0
+$ToneAttackMs = 3.0
+$ToneReleaseMs = 170.0
 
-# Supported waveforms: sine, square, triangle, noise.
-$BasePitchHz = 220.0
+# The fallback Base is rooted at D3. The fallback Player is rooted at F#3;
+# runtime harmony usually places it a diatonic third above its source note.
+$BasePitchHz = 146.832
 $BaseWaveform = "triangle"
-$BaseVolume = 0.90
+$BaseVolume = 0.38
 
-$PerfectPitchHz = 294.0
+$PerfectPitchHz = 184.997
 $PerfectWaveform = "triangle"
-$PerfectVolume = 0.50
+$PerfectVolume = 0.44
 
-$GoodPitchHz = 311.00
+$GoodPitchHz = 184.997
 $GoodWaveform = "triangle"
-$GoodVolume = 0.50
+$GoodVolume = 0.36
 
-$ClosePitchHz = 330.0
+$ClosePitchHz = 184.997
 $CloseWaveform = "triangle"
-$CloseVolume = 0.50
+$CloseVolume = 0.28
 
 # Pitch is ignored when the waveform is noise.
 $MissPitchHz = 580.0
@@ -34,21 +35,22 @@ $MissAttackMs = 25.0
 $MissReleaseMs = 75.0
 $MissVolume = 0.15
 
-# Twelve D-major-pentatonic rows used by Design Mode. Player rows are
-# generated one octave above the corresponding base rows.
+# Twelve D-major rows used by Design Mode. Including G and C# supplies the IV
+# and V chord tones used by the pop-rock progression generator. Player rows
+# are generated one octave above the corresponding base rows.
 $DesignBasePitchHz = @(
     73.416,  # D2
     82.407,  # E2
     92.499,  # F#2
+    97.999,  # G2
     110.000, # A2
     123.471, # B2
+    138.591, # C#3
     146.832, # D3
     164.814, # E3
     184.997, # F#3
-    220.000, # A3
-    246.942, # B3
-    293.665, # D4
-    329.628  # E4
+    195.998, # G3
+    220.000  # A3
 )
 
 $OutputDirectory = Join-Path $PSScriptRoot "..\app\src\main\res\raw"
@@ -65,7 +67,7 @@ function New-GameSound {
         [string]$FileName,
 
         [Parameter(Mandatory)]
-        [ValidateSet("sine", "square", "triangle", "noise")]
+        [ValidateSet("sine", "square", "triangle", "chip", "noise")]
         [string]$Waveform,
 
         [double]$PitchHz,
@@ -96,6 +98,10 @@ function New-GameSound {
         "triangle" {
             "aevalsrc=(2/PI)*asin(sin(2*PI*${frequency}*t)):s=${SampleRate}:d=${durationSeconds}"
         }
+        "chip" {
+            # Kept as an optional legacy waveform for experimentation.
+            "aevalsrc=0.42*sgn(sin(2*PI*${frequency}*t+0.035*sin(2*PI*5.2*t)))+0.38*(2/PI)*asin(sin(2*PI*${frequency}*t))+0.20*sin(4*PI*${frequency}*t):s=${SampleRate}:d=${durationSeconds}"
+        }
         "noise" {
             "anoisesrc=color=white:duration=${durationSeconds}:sample_rate=$SampleRate"
         }
@@ -107,6 +113,9 @@ function New-GameSound {
     }
     if ($ReleaseMs -gt 0.0) {
         $filters += "afade=t=out:st=${releaseStartSeconds}:d=$releaseSeconds"
+    }
+    if ($Waveform -eq "chip") {
+        $filters += "lowpass=f=5200"
     }
     $filters += "volume=$volumeValue"
 

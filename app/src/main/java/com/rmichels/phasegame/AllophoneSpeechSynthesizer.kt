@@ -1,8 +1,5 @@
 package com.rmichels.phasegame
 
-import android.media.AudioAttributes
-import android.media.AudioFormat
-import android.media.AudioTrack
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.exp
@@ -17,37 +14,10 @@ import kotlin.random.Random
  * Generic renderer for data-driven [VocalBarkDefinition] arrangements.
  */
 internal object AllophoneSpeechSynthesizer {
-    private const val SAMPLE_RATE = 48_000
+    const val SAMPLE_RATE = 48_000
 
-    fun playFromStart(track: AudioTrack) {
-        if (track.playState == AudioTrack.PLAYSTATE_PLAYING) {
-            track.pause()
-        }
-        track.setPlaybackHeadPosition(0)
-        track.play()
-    }
-
-    fun createTrack(bark: VocalBark): AudioTrack {
-        val pcm = render(VocalBarkCatalog.definitionFor(bark))
-        return AudioTrack.Builder()
-            .setAudioAttributes(
-                AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_GAME)
-                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                    .build()
-            )
-            .setAudioFormat(
-                AudioFormat.Builder()
-                    .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-                    .setSampleRate(SAMPLE_RATE)
-                    .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
-                    .build()
-            )
-            .setTransferMode(AudioTrack.MODE_STATIC)
-            .setBufferSizeInBytes(pcm.size * Short.SIZE_BYTES)
-            .build()
-            .also { track -> track.write(pcm, 0, pcm.size) }
-    }
+    fun renderPcm(bark: VocalBark): ShortArray =
+        render(VocalBarkCatalog.definitionFor(bark))
 
     private fun render(bark: VocalBarkDefinition): ShortArray {
         val output = ArrayList<Double>()

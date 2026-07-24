@@ -1,8 +1,16 @@
 package com.rmichels.phasegame
 
+import com.rmichels.phasegame.audio.ACTIVE_BACKING_TRACK_ID
+import com.rmichels.phasegame.audio.GeneratedBackingTrackCatalog
+import com.rmichels.phasegame.audio.activeBackingTrack
+import com.rmichels.phasegame.audio.activeBackingTrackMaxTier
+import com.rmichels.phasegame.audio.activeBackingTrackStepDurationMs
+import com.rmichels.phasegame.audio.isLoopBoundary
+import com.rmichels.phasegame.audio.sampleForTier
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import kotlin.random.Random
 
 class ExampleUnitTest {
     @Test
@@ -114,29 +122,6 @@ class ExampleUnitTest {
     }
 
     @Test
-    fun everySupportedPatternLength_dividesPitchAndWrapsLayersSafely() {
-        val shortLayerPattern = listOf(true, false, false)
-
-        for (stepCount in MIN_PATTERN_STEPS..MAX_PATTERN_STEPS) {
-            val sections = (0 until stepCount).map { step ->
-                pitchSectionForStep(step, stepCount)
-            }
-
-            assertEquals(0, sections.first())
-            assertTrue(sections.all { it in 0..3 })
-            assertTrue(sections.zipWithNext().all { (left, right) -> left <= right })
-            assertEquals(minOf(4, stepCount), sections.distinct().size)
-
-            for (step in 0 until stepCount) {
-                assertEquals(
-                    shortLayerPattern[step % shortLayerPattern.size],
-                    repeatingPatternValue(shortLayerPattern, step)
-                )
-            }
-        }
-    }
-
-    @Test
     fun everySupportedPatternLength_buildsAndResizesAValidDesign() {
         for (stepCount in MIN_PATTERN_STEPS..MAX_PATTERN_STEPS) {
             val rhythm = List(stepCount) { step -> step % 3 != 2 }
@@ -172,13 +157,13 @@ class ExampleUnitTest {
         )
 
         design = design.withBaseNote(stepIndex = 0, pitchIndex = 2)
-        assertEquals(2, design.baseNotes[0])
+        assertEquals(listOf(2), design.baseNotes[0])
 
         design = design.withBaseNote(stepIndex = 0, pitchIndex = 9)
-        assertEquals(9, design.baseNotes[0])
+        assertEquals(listOf(9), design.baseNotes[0])
 
         design = design.withBaseNote(stepIndex = 0, pitchIndex = null)
-        assertEquals(null, design.baseNotes[0])
+        assertEquals(emptyList<Int>(), design.baseNotes[0])
         assertEquals(false, design.baseRhythm[0])
     }
 
@@ -261,6 +246,130 @@ class ExampleUnitTest {
             for (step in 0 until design.stepCount) {
                 assertEquals(null, design.playerNote(phase, step))
             }
+        }
+    }
+
+    @Test
+    fun chords_toggleInPitchOrderAndRespectTheMaximumSize() {
+        var design = GameDesign.fromBaseRhythm(
+            listOf(true, false, true, true)
+        )
+        design = design.withBaseNote(0, null)
+
+        listOf(9, 2, 7, 4, 11).forEach { pitch ->
+            design = design.toggledBasePitch(0, pitch)
+        }
+
+        assertEquals(listOf(2, 4, 7, 9), design.baseNotes[0])
+        design = design.toggledBasePitch(0, 7)
+        assertEquals(listOf(2, 4, 9), design.baseNotes[0])
+
+        design = design.toggledPlayerPitch(0, 0, 5)
+        assertEquals(listOf(5), design.playerNotes(0, 0))
+        design = design.toggledPlayerPitch(0, 0, 8)
+        assertEquals(listOf(5, 8), design.playerNotes(0, 0))
+    }
+
+    @Test
+    fun generatedBackingTrack_matchesGameplayTempoAndTierProgression() {
+        assertEquals(250L, activeBackingTrackStepDurationMs)
+        assertEquals(
+            activeBackingTrack.tiers.maxOf { it.tier },
+            activeBackingTrackMaxTier
+        )
+        assertEquals(ACTIVE_BACKING_TRACK_ID, activeBackingTrack.id)
+        assertTrue(
+            GeneratedBackingTrackCatalog.tracks.contains(
+                activeBackingTrack
+            )
+        )
+        assertEquals(null, activeBackingTrack.sampleForTier(0))
+        activeBackingTrack.tiers.forEach { tier ->
+            assertEquals(
+                tier.tier,
+                activeBackingTrack.sampleForTier(tier.tier)?.tier
+            )
+        }
+    }
+
+    @Test
+    fun generatedBackingTrack_schedulesOnlyAtItsLoopBoundary() {
+        assertTrue(activeBackingTrack.isLoopBoundary(0))
+        assertTrue(
+            activeBackingTrack.isLoopBoundary(
+                activeBackingTrack.stepCount.toLong()
+            )
+        )
+        assertEquals(false, activeBackingTrack.isLoopBoundary(1))
+    }
+
+    @Test
+    fun popRockMelody_remainsStableUntilTheGameplayPhaseChanges() {
+        val melody = PopRockPhaseMelody(
+            stepCount = 16,
+            random = Random(12_345)
+        )
+        val firstPhrase = melody.snapshotSemitoneOffsets()
+        val firstGeneration = melody.generationCount()
+
+        melody.selectPhase(0)
+        assertEquals(firstPhrase, melody.snapshotSemitoneOffsets())
+        assertEquals(firstGeneration, melody.generationCount())
+
+        melody.selectPhase(1)
+        assertEquals(firstGeneration + 1, melody.generationCount())
+        assertTrue(firstPhrase != melody.snapshotSemitoneOffsets())
+    }
+
+    @Test
+    fun popRockMelody_usesMajorKeyTonesAndChordAnchors() {
+        val stepCount = 16
+        val melody = PopRockPhaseMelody(
+            stepCount = stepCount,
+            random = Random(98_765)
+        )
+        val notes = melody.snapshotSemitoneOffsets()
+        val chordRoots = melody.snapshotChordRoots()
+        val majorPitchClasses = setOf(0, 2, 4, 5, 7, 9, 11)
+
+        assertTrue(
+            notes.all {
+                Math.floorMod(it, 12) in majorPitchClasses
+            }
+        )
+        chordRoots.indices.forEach { chordPosition ->
+            val chordStart =
+                chordPosition * stepCount / chordRoots.size
+            assertTrue(
+                PopRockPhaseMelody.isChordTone(
+                    notes[chordStart],
+                    chordRoots[chordPosition]
+                )
+            )
+        }
+    }
+
+    @Test
+    fun playerPhaseNote_isDiatonicAndNeverMatchesSimultaneousBaseNote() {
+        val stepCount = 12
+        val phase = 3
+        val melody = PopRockPhaseMelody(
+            stepCount = stepCount,
+            random = Random(456)
+        )
+        melody.selectPhase(phase)
+        val baseNotes = melody.snapshotSemitoneOffsets()
+        val majorPitchClasses = setOf(0, 2, 4, 5, 7, 9, 11)
+
+        repeat(stepCount) { playerStep ->
+            val playerNote = melody.playerSemitoneForStep(
+                playerStep,
+                phase
+            )
+            assertTrue(
+                Math.floorMod(playerNote, 12) in majorPitchClasses
+            )
+            assertTrue(playerNote != baseNotes[playerStep])
         }
     }
 
