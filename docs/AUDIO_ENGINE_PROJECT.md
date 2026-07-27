@@ -1,178 +1,190 @@
-# Beat Phaser: Low-Latency Audio Engine Project Brief
+# Beat Phaser Audio Engine: Architecture and Status
 
-## Implementation Status (July 24, 2026)
+## Status (July 27, 2026)
 
-Implemented in the current worktree:
+The low-latency audio migration is implemented. Beat Phaser now uses one
+activity-owned native Oboe engine for gameplay, Design preview/audition,
+backing tracks, and generated allophone speech. The former independent
+`SoundPool`/`AudioTrack` paths are no longer the runtime architecture.
 
-- One activity-owned Oboe 1.10.0 engine replaces both `SoundPool` instances and
-  the title `AudioTrack`.
-- All short WAVs and rendered allophone PCM are registered before playback.
-- A bounded lock-free command queue feeds a preallocated 48-voice mixer.
-- Events use elapsed-realtime nanosecond timestamps; callback block timing maps
-  them to frame offsets and rejects events more than 40 ms late.
-- Linear interpolation, gain/pan, optional attack/release, deterministic voice
-  stealing, sessions, bus/master gains, diagnostics, and stream recovery exist.
-- `GameAudioConductor` schedules base and percussion independently of Compose.
-- Gameplay, Design preview/audition, and voice playback share the catalog.
-- The design model supports ordered chords of up to four pitches, with a
-  versioned saver that also restores legacy monophonic state.
+Automated unit tests, native ABI builds, debug APK assembly, lint, installation,
+and startup checks pass. The remaining validation is subjective and long-form
+device testing: listen for balance and timbre, exercise route changes and app
+lifecycle transitions, and monitor latency, jitter, xruns, or phase drift during
+multi-minute play.
 
-Unit, native ABI, APK, and lint builds pass. Pixel 8a hands-on latency, jitter,
-underrun, route-change, and multi-minute phase-lock acceptance testing remains
-required before calling the migration production-validated.
-
-## Objective
-
-Replace the two independent `SoundPool` implementations with one dedicated
-low-latency audio engine that treats the rhythm clock, sound scheduling, mixing,
-pitch, envelopes, and polyphony as a coherent subsystem. Preserve current game
-feel and sounds first; enable reliable chords and richer synthesis second.
-
-This is a substantial architectural project, not a small SoundPool refactor.
-
-## Why
-
-Current limitations:
-
-- `SoundPool.play()` is requested from coroutine/UI-side scheduling rather than
-  sample-accurately scheduled inside an audio callback.
-- Gameplay is limited to 8 simultaneous streams; base, percussion, player
-  notes, releases, and future chords can cause voice stealing or dropped notes.
-- Gameplay and Design preview own separate pools and loading logic.
-- Timing uses a strong monotonic master clock, but audio onset is still subject
-  to thread wakeup and SoundPool latency/jitter.
-- Pitch quality depends on SoundPool playback-rate resampling.
-- Musical state, sample IDs, judgment timbres, and mixing are spread through
-  Compose code.
-
-## Recommended Direction
-
-Use a native Android audio callback engine through Oboe, with AAudio where the
-device supports it and the appropriate fallback on older supported devices.
-Keep Kotlin responsible for game rules and UI; keep real-time rendering,
-scheduling, voice allocation, and mixing in the audio engine.
-
-High-level boundary:
+## Current Architecture
 
 ```text
-Kotlin game/master clock
-  -> timestamped AudioEvent commands
-  -> lock-free/native command queue
-  -> real-time audio callback
-  -> voice mixer/envelopes/resampling
-  -> device output
+Kotlin game rules + RhythmClock
+        |
+        | elapsed-realtime nanosecond AudioEvents
+        v
+NativeAudioEngine (Kotlin/JNI boundary)
+        |
+        v
+bounded lock-free command queue
+        |
+        v
+Oboe real-time callback
+        +-- timestamp-to-frame scheduling
+        +-- PCM sample playback and linear resampling
+        +-- per-voice gain, pan, attack, and release
+        +-- deterministic 48-voice allocation/stealing
+        +-- Base, Player, Percussion, and Voice buses
+        +-- master gain and soft limiting
+        v
+device output
 ```
 
-Do not move scoring or visual queue rules into native code.
+Kotlin remains responsible for scoring, phase rules, pitch selection, patterns,
+and the authoritative monotonic clock. Native code owns time-critical event
+placement, voice playback, and mixing. Compose displays state and submits
+player feedback, but does not sleep to time musical notes.
 
-## Required Engine Capabilities
+`GameAudioConductor` runs on a background coroutine and schedules Base and
+backing events with rolling 100 ms look-ahead. The native engine drops events
+that arrive more than 40 ms late instead of producing a stale-note burst.
 
-- Low-latency output configured for game/interactive use.
-- One audio frame timeline related explicitly to the existing monotonic
-  `RhythmClock`.
-- Schedule events at exact future audio-frame positions rather than sleeping
-  until each note.
-- Preload/decode all short PCM assets before play; no allocation, file I/O,
-  locks, logging, or JNI calls from the real-time callback.
-- Polyphonic voice pool with deterministic allocation/stealing and a limit
-  comfortably above maximum percussion + base + player chords + release tails.
-- Per-voice:
-  - sample/synth source
-  - gain and optional pan
-  - pitch/resampling ratio
-  - attack/release envelope
-  - start frame and stop/release behavior
-- Buses for base, player, percussion, voice barks, and master gain.
-- Centralized pause/start/dispose and Android lifecycle handling.
-- Report output latency/configuration for calibration and diagnostics.
-- Reuse the same engine for gameplay and Design Mode previews.
+## Implemented Capabilities
 
-## Preserve Existing Behavior
+- Oboe 1.10.0 low-latency output with Android stream recovery.
+- Preloaded mono PCM-16 WAV resources plus PCM registered directly from Kotlin.
+- A 2,048-command lock-free queue and 2,048 scheduled-event capacity.
+- A preallocated 48-voice mixer with priority-based deterministic stealing.
+- Elapsed-realtime nanosecond scheduling and callback-frame placement.
+- Linear pitch resampling, per-event gain/pan, and attack/release envelopes.
+- Base, Player, Percussion, Voice, and master gain controls.
+- Cancellable audio sessions for previews, navigation, and stale backing audio.
+- Diagnostics for stream configuration, latency, xruns, active voices, dropped
+  commands, and late events.
+- One shared engine for gameplay, Design Mode, and title speech.
+- Designed chords of up to four notes.
+- Generated backing tracks that consume one mixer voice regardless of their
+  authored instrument or chord count.
 
-- `STEP_DURATION_MS = 250`.
-- Existing `RhythmClock` remains the authoritative gameplay timekeeper.
-- Current 10 ms input compensation and Perfect/Good/Close/Miss windows initially
-  remain unchanged; recalibrate only after measured on-device testing.
-- Current WAV timbres, pitch palette, pop-motif generation, accuracy detuning,
-  percussion ordering, and allophone playback must continue to work during the
-  migration.
-- Pattern lengths remain generic from 2 through 16.
-- A UI stall must not produce a burst of stale notes.
-- Player input feedback should begin as soon as practical while scoring still
-  uses the compensated master-clock timestamp.
+Fixed native capacities currently allow sample IDs `1..63`. IDs `41..63` are
+reserved by the backing-track installer, for a maximum of 23 installed tier
+WAVs across all cataloged tracks.
 
-## Suggested Migration Stages
+## Current Musical Behavior
 
-1. **Define Kotlin API and event model**
-   - `AudioEngine.start/stop/release`
-   - load/register samples
-   - schedule/cancel timestamped notes
-   - immediate player-feedback event
-   - bus/master gain controls
+### Base and Player tones
 
-2. **Native callback and clock mapping**
-   - establish stable conversion between elapsed realtime and audio frames
-   - build lock-free command ingestion
-   - add underrun/timing diagnostics outside the callback
+Built-in Base and unset Player notes use short, pre-generated triangle-wave
+PCM assets with a clean PICO-8-like character. `tools/generate-sounds.ps1`
+generates these assets through FFmpeg; the native engine does not synthesize an
+oscillator at runtime.
 
-3. **PCM sample mixer**
-   - reproduce existing SoundPool output with mono short WAV assets
-   - implement interpolation/resampling and envelopes
-   - verify overlapping base/percussion/player voices
+`PopRockPhaseMelody` generates one complete melody for each active gameplay
+phase. The phrase remains unchanged for all attempts/bars in that phase and is
+regenerated only when gameplay advances to a new phase. Its rules use D-major
+tones, functional pop-rock progressions such as I-V-vi-IV, chord tones on
+strong positions, and compact passing motion.
 
-4. **Migrate gameplay**
-   - extract audio scheduling from `PhaseGameScreen`
-   - schedule ahead by step/bar using the master timeline
-   - keep scoring and Compose state in Kotlin
-   - remove gameplay SoundPool only after behavior matches
+Player feedback harmonizes the corresponding shifted Base note by a diatonic
+third. If that pitch would duplicate the simultaneous Base note, it switches to
+a diatonic fifth. Perfect, Good, and Close keep the chosen pitch in key and use
+different asset levels; Miss uses a separate dissonant square-wave asset.
 
-5. **Migrate Design preview**
-   - remove its separate SoundPool
-   - use the shared palette and engine
+Designed notes bypass random melody selection and use the explicit 12-row
+D-major palette selected in Design Mode.
 
-6. **Polyphony/chords**
-   - change designed notes from `Int?` to an explicit chord-capable model such
-     as an ordered immutable set/list of pitches
-   - update saver, editor gestures, playback, and regression tests
-   - define maximum chord size and voice-stealing policy
+### Backing tracks
 
-7. **Optional synthesis evolution**
-   - generate triangle/sine/noise sources in-engine
-   - reduce pre-generated pitch assets
-   - migrate allophone rendering if useful, without risking gameplay callback
-
-## Acceptance Criteria
-
-- No audible regression in existing monophonic gameplay.
-- Base, layers, and scheduled player/design notes stay phase-locked during a
-  multi-minute run.
-- No stale-note bursts after deliberate UI/main-thread stalls.
-- No dropped voices at the defined maximum chord/layer load.
-- Design preview and gameplay use the same engine and sound definitions.
-- Start/stop/re-enter gameplay repeatedly without leaks, crashes, or duplicate
-  audio.
-- Tests cover timestamp-to-frame conversion, event ordering, cancellation,
-  voice limits/stealing, arbitrary 2..16 step patterns, and lifecycle resets.
-- Pixel 8a hands-on testing records output latency, onset jitter, and underruns
-  before and after migration.
-
-## Likely Files/Structure
+Backing tracks are authored in the adjacent Rust project:
 
 ```text
+C:\MyDocs\BeatPhaserTrackEditor
+```
+
+The editor supports unpitched step rows, pitched piano rolls from a single
+declared source-WAV note, chords, per-instrument gain, multiple patterns, and
+gameplay-tier assignment. At tier N, each instrument uses its highest pattern
+assigned at or below N, allowing both additive layers and pattern replacement.
+
+**Install in Game** renders the entire audible result of every tier offline as
+one 48 kHz mono PCM-16 WAV. It copies those WAVs into Android resources, updates
+`backing_tracks/installed_tracks.json`, and regenerates
+`GeneratedBackingTrackCatalog.kt`. At runtime the conductor schedules only the
+selected tier WAV at a loop boundary, so backing audio always occupies one
+native voice.
+
+Multiple tracks may be installed. `BackingTrackConfig.kt` contains the
+high-level `ACTIVE_BACKING_TRACK_ID` switch. The active track's BPM and
+steps-per-beat determine the shared gameplay step duration; its step count
+determines backing-loop boundaries. See `AUDIO_ENGINE_DEVELOPER_GUIDE.md` for
+the full authoring and installation workflow.
+
+## Source Map
+
+```text
+app/src/main/java/com/rmichels/phasegame/
+  MainActivity.kt                 Engine ownership and Player events
+  GameAudioConductor.kt           Scheduled Base/backing authoring
+  PopRockPhaseMelody.kt           Phase melody and Player harmony
+  DesignScreen.kt                 Shared-engine audition and preview
+  PitchPalette.kt                 Designed-note judgment pitch policy
+
 app/src/main/java/com/rmichels/phasegame/audio/
-  AudioEngine.kt
-  AudioEvent.kt
-  SoundCatalog.kt
+  AudioEngine.kt                  Kotlin engine interface
+  AudioEvent.kt                   Events, buses, sessions, diagnostics
+  AudioMix.kt                     Central default gains
+  NativeAudioEngine.kt            Resource loading and JNI calls
+  SoundCatalog.kt                 Sample IDs and raw resources
+  BackingTrackConfig.kt           Active track selection
+  BackingTrackRuntime.kt          Tempo, tiers, and loop helpers
+  GeneratedBackingTrackCatalog.kt Editor-generated track catalog
 
 app/src/main/cpp/
-  AudioEngine.cpp/.h
-  Voice.cpp/.h
-  Sample.cpp/.h
-  JniBridge.cpp
+  AudioEngine.h/.cpp              Queue, scheduler, voices, and mixer
+  JniBridge.cpp                   Kotlin/native bridge
+  CMakeLists.txt                  Native build and Oboe link
 
-app/src/main/cpp/CMakeLists.txt
+tools/
+  generate-sounds.ps1             Musical/percussion WAV generation
 ```
 
-Gradle will need Android native/CMake configuration and the selected Oboe
-dependency/integration. Avoid committing to a library version without checking
-the current official Android guidance at implementation time.
+## Important Invariants
+
+- `RhythmClock` and `SystemClock.elapsedRealtime()` remain the authoritative
+  game timeline.
+- Do not move scoring, queue movement, or phase progression into C++.
+- Do not allocate, lock, perform file I/O, log, or call JNI from the real-time
+  audio callback.
+- Prepare and register sample data before starting the stream.
+- Use timestamped events for scheduled music and immediate events for tap
+  feedback.
+- Use sessions to cancel related pending/active sounds.
+- Keep pattern logic generic for game lengths `2..16`.
+- Every backing tier WAV is already a complete mix; never schedule its authored
+  component instruments separately in the game.
+- Treat `GeneratedBackingTrackCatalog.kt` as generated output and change the
+  active track only through `BackingTrackConfig.kt`.
+
+## Current Limitations
+
+- WAV resource decoding accepts uncompressed integer PCM, mono, 16-bit files;
+  there is no stereo or compressed-file decoder.
+- All samples, including complete backing tier WAVs, are decoded into memory;
+  there is no streaming player.
+- The engine has no runtime oscillator, filter, reverb, delay, compressor, or
+  pitch-independent time stretching.
+- Canceling a session stops matching voices immediately rather than applying a
+  smooth release.
+- Diagnostics exist in code but have no dedicated developer UI.
+- Hands-on long-duration and audio-route acceptance testing is still required.
+
+## Validation
+
+From `C:\MyDocs\PhaseGame`:
+
+```powershell
+$env:JAVA_HOME='C:\Program Files\Android\Android Studio\jbr'
+.\gradlew.bat testDebugUnitTest assembleDebug lintDebug
+```
+
+On a connected device, verify title speech, built-in Base/Player melody,
+Perfect/Good/Close/Miss feedback, designed chords, tier entry and reset,
+repeated Design previews, background/resume, audio-route changes, and a
+multi-minute phase-lock run.

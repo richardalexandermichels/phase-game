@@ -33,9 +33,11 @@ before continuing, unless the user explicitly groups several changes.
 - A bar clears only after all `true` steps in the current pattern are hit
   without a miss during that clock bar. It never clears merely because time
   elapsed.
-- Each clean completed bar advances one generated backing-track tier. The
-  current imported track adds bass at tier 1, snare at tier 2, and pitched
-  piano chords at tier 3. A miss resets the backing tier to zero.
+- Each clean completed bar advances one generated backing-track tier. A miss
+  resets the backing tier to zero. The installed catalog currently contains
+  `new_backing_track`, with four complete tier mixes; treat the generated
+  catalog, rather than this document, as authoritative because the editor can
+  replace it at any time.
 - Misses raise the music queue. If the active row is pushed back to the play
   area's midpoint line, the game ends.
 - The queue has up to 11 rows and moves like one continuous sheet. The fixed
@@ -54,11 +56,11 @@ baseNotes: List<List<Int>>
 playerNotesByPhase: List<List<List<Int>>>
 ```
 
-- Twelve pitch rows use a D-major-pentatonic palette across registers.
+- Twelve pitch rows use a full D-major diatonic palette across registers.
 - Width is adjustable from 2 through 16.
 - A column contains an ordered pitch list with a maximum of four notes.
 - An empty Base chord makes that rhythm step false. An empty enabled Player
-  chord uses the generated pop-motif fallback.
+  chord uses the generated phase-melody harmony fallback.
 - There is one cycleable Player matrix per possible phase.
 - Player columns whose shifted rhythm step is false are disabled.
 - Matrices use one page when cells fit and otherwise exactly two pages; an odd
@@ -77,6 +79,8 @@ playerNotesByPhase: List<List<List<Int>>>
 
 - Developer workflows and API examples are documented in
   `docs/AUDIO_ENGINE_DEVELOPER_GUIDE.md`.
+- Backing-track authoring and installation are documented in
+  `docs/BACKING_TRACK_EDITOR.md`.
 - Gameplay, Design preview/audition, and title voice use one native Oboe engine.
 - Kotlin submits elapsed-realtime nanosecond events through a bounded native
   queue. The callback owns onset timing, resampling, envelopes, and a
@@ -99,16 +103,27 @@ playerNotesByPhase: List<List<List<Int>>>
   D-major passing tones, and compact melodic movement. Player pitches harmonize
   the corresponding shifted Base notes by a diatonic third, falling back to a
   diatonic fifth whenever the third would duplicate the simultaneous Base note.
-- Perfect, Good, and Close preserve the intended pitch and vary by timbre/
-  level. Miss uses its dedicated dissonant sample.
+- Perfect, Good, and Close preserve the intended pitch and use separate
+  triangle-wave assets at different levels. Miss uses its dedicated dissonant
+  square-wave sample.
 - The adjacent Rust editor renders one complete mono PCM-16 WAV per tier and
   installs it directly into the game. Runtime backing audio therefore occupies
   one native mixer voice regardless of the authored instrument/chord count.
+- The editor lives at `C:\MyDocs\BeatPhaserTrackEditor`. It supports unpitched
+  toggle rows, pitched piano rolls generated from a declared source-WAV note,
+  chords, per-instrument gain, multiple tiered patterns, exact tier preview,
+  `.bpt` project saves, portable track-pack export, and one-click game install.
+- At tier N, each instrument contributes its highest pattern assigned to a tier
+  less than or equal to N. A higher-tier pattern replaces the earlier pattern
+  for that instrument; different instruments layer together. The editor mixes
+  that complete result offline into the tier WAV.
 - `GeneratedBackingTrackCatalog.kt` lists every installed track and tier WAV.
   `BackingTrackConfig.kt` contains the high-level
   `ACTIVE_BACKING_TRACK_ID` selection. `BackingTrackRuntime.kt` supplies
   permanent tempo, tier-selection, and loop-boundary behavior.
 - The current track's generated catalog is authoritative for its tier count.
+  Its BPM and steps-per-beat also determine the game's step duration, and its
+  step count determines each backing-WAV loop boundary.
 - Native allophonic speech PCM says "Beat Phaser" through the shared engine.
   Curated bark definitions also exist for "error" and "sequence complete," but
   gameplay triggers/buttons for those were removed.
@@ -143,6 +158,8 @@ playerNotesByPhase: List<List<List<Int>>>
   - editable musical/percussion WAV generation
 - `tools/generate-vocal.ps1`
   - older/generated vocal tooling
+- `C:\MyDocs\BeatPhaserTrackEditor`
+  - adjacent Rust backing-track sequencer and direct-install tool
 - `app/src/test/java/com/rmichels/phasegame/ExampleUnitTest.kt`
   - clock, phasing, 2..16 step, queue, drawing, layer, design, and pagination
     regressions

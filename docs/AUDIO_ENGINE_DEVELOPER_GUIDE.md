@@ -94,6 +94,7 @@ app/src/main/java/com/rmichels/phasegame/audio/
 
 app/src/main/java/com/rmichels/phasegame/
   GameAudioConductor.kt   Background Base/backing-track scheduling
+  PopRockPhaseMelody.kt   Phase-scoped Base melody and Player harmony
   MainActivity.kt         Engine ownership and player feedback
   DesignScreen.kt         Auditions and whole-bar previews
 
@@ -104,6 +105,9 @@ app/src/main/cpp/
 
 tools/
   generate-sounds.ps1     Generated tone/percussion asset authoring
+
+C:/MyDocs/BeatPhaserTrackEditor/
+  Adjacent Rust sequencer, tier renderer, and direct game installer
 ```
 
 ## Sound Creation
@@ -494,24 +498,57 @@ bounded memory must be preserved.
 
 ### Import a backing track from the Rust editor
 
+For a focused operational reference, also see
+`docs/BACKING_TRACK_EDITOR.md`.
+
 The adjacent project is normally:
 
 ```text
 C:\MyDocs\BeatPhaserTrackEditor
 ```
 
-Open or create a `.bpt` project there:
+Run the release executable:
 
-1. click **Game Folder...** and select the PhaseGame project root (normally
-   `C:\MyDocs\PhaseGame`); this setting persists;
-2. click **Install in Game**;
-3. deploy PhaseGame normally.
+```text
+C:\MyDocs\BeatPhaserTrackEditor\target\release\beat-phaser-track-editor.exe
+```
 
-The installer renders one complete mono WAV for every tier, copies those files
-to `app/src/main/res/raw`, updates
-`backing_tracks/installed_tracks.json`, and regenerates
-`GeneratedBackingTrackCatalog.kt`. Reinstalling the same track title updates
-its catalog entry. Installing a different title preserves both tracks.
+Or run it from source with `cargo run`. Then open or create a `.bpt` project:
+
+1. set the project title, BPM, steps per beat, and step count;
+2. add an instrument, give it a name, choose its source WAV, and set its gain;
+3. leave **Pitched instrument** off for a one-row drum/percussion pattern;
+4. turn **Pitched instrument** on for a piano roll, then identify the note
+   actually sounding in the source WAV (for example `C4`) and choose its
+   playable range;
+5. draw the pattern. Pitched steps may contain chords;
+6. add patterns as needed and assign each one a tier;
+7. choose **Preview tier** and use the transport to hear the same pattern
+   selection the offline renderer will use;
+8. save the editable project as `.bpt`;
+9. click **Game Folder...** and select the PhaseGame project root (normally
+   `C:\MyDocs\PhaseGame`); this setting persists in the editor's Windows app
+   data;
+10. click **Install in Game**, then rebuild/deploy PhaseGame.
+
+At active tier N, each instrument uses its highest pattern whose assigned tier
+is less than or equal to N. Therefore a new kick pattern can replace the old
+kick while a snare from another instrument continues to layer. A single
+instrument cannot have two patterns assigned to the same tier.
+
+The installer:
+
+- validates the project and source WAVs;
+- transposes pitched samples with equal-tempered playback rates;
+- mixes one complete 48 kHz mono PCM-16 WAV for every tier;
+- copies the tier WAVs into `app/src/main/res/raw`;
+- updates `backing_tracks/installed_tracks.json`;
+- regenerates `GeneratedBackingTrackCatalog.kt` and assigns sample IDs from
+  `41` through `63` across all installed tiers.
+
+Reinstalling the same slugged track title replaces its old tier WAVs and
+catalog entry. Installing a different title preserves both tracks. Do not edit
+the generated Kotlin catalog by hand; the next install will replace it.
 
 The game currently uses one track. Select it in `BackingTrackConfig.kt`:
 
@@ -519,8 +556,9 @@ The game currently uses one track. Select it in `BackingTrackConfig.kt`:
 internal const val ACTIVE_BACKING_TRACK_ID = "new_backing_track"
 ```
 
-The ID is the lowercase/underscore version of the editor title and is visible
-in `GeneratedBackingTrackCatalog.kt`.
+The ID is the resource-safe slug derived from the editor title and is visible
+in `GeneratedBackingTrackCatalog.kt`. If the configured ID is absent, the game
+falls back to the first generated catalog entry.
 
 Each clean gameplay bar advances one tier; a miss resets to tier zero. At an
 active tier, each instrument selects its highest sequence tier not exceeding
@@ -539,6 +577,22 @@ all lower-tier instruments or their applicable replacement patterns. At
 runtime `GameAudioConductor` schedules one tier WAV at each backing-loop
 boundary, so backing audio consumes exactly one native voice.
 
+The selected track's BPM and steps-per-beat determine the shared gameplay step
+duration. Its step count determines the backing loop boundary. Changing these
+values in the editor therefore changes both backing playback and the game's
+master rhythm timing after the next build.
+
+For automation, the release executable also supports:
+
+```powershell
+beat-phaser-track-editor.exe --install <project.bpt> C:\MyDocs\PhaseGame
+```
+
+**Export Track Pack** is separate from installation. It creates a portable
+folder containing `track_pack.json`, normalized source WAVs, an install note,
+and rendered tier WAVs. Use it for backup or transfer; use **Install in Game**
+for the normal game integration workflow.
+
 ### Change the built-in melody
 
 `PopRockPhaseMelody.kt` owns fallback pitch generation. It chooses a functional
@@ -548,8 +602,11 @@ current gameplay phase.
 
 The same phrase repeats for every attempt while that phase remains active.
 When the player clears enough bars for the playable pattern to phase,
-`selectPhase()` generates a new phrase. Player feedback uses the pitch of the
-corresponding shifted Base step, so both parts remain harmonically related.
+`selectPhase()` generates a new phrase. Player feedback harmonizes the
+corresponding shifted Base note by a diatonic third. If that would equal the
+Base pitch sounding on the same step, it uses a diatonic fifth instead. This
+keeps Player notes consonant, in key, lower than the old octave-up register,
+and distinct from simultaneous Base notes.
 
 Designed pitches bypass the random phrase and play their explicitly selected
 D-major palette notes.
@@ -602,7 +659,7 @@ Then manually verify:
 - built-in gameplay;
 - designed Base and Player pitches;
 - two-, three-, and four-note chords;
-- Good/Close detuning and Miss sound;
+- Perfect/Good/Close levels and Miss sound;
 - layer entry/reset;
 - repeated previews and navigation;
 - background/resume;
