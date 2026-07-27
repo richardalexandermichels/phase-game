@@ -36,6 +36,121 @@ class ExampleUnitTest {
     }
 
     @Test
+    fun rhythmClock_pauseFreezesProgressAndResumePreservesPosition() {
+        val clock = RhythmClock(stepDurationMs = 250L, stepsPerBar = 4)
+        clock.start(nowMs = 1_000L)
+
+        clock.pause(nowMs = 1_375L)
+        assertEquals(375L, clock.elapsedMs(nowMs = 9_000L))
+        assertEquals(0L, clock.absoluteBarIndex(nowMs = 9_000L))
+
+        clock.resume(nowMs = 2_375L)
+        assertEquals(375L, clock.elapsedMs(nowMs = 2_375L))
+        assertEquals(625L, clock.elapsedMs(nowMs = 2_625L))
+    }
+
+    @Test
+    fun nearestHit_usesThePatternAssignedToEachAdjacentBar() {
+        val clock = RhythmClock(stepDurationMs = 250L, stepsPerBar = 4)
+        clock.start(nowMs = 1_000L)
+        val patterns = mapOf(
+            0L to listOf(false, false, false, true),
+            1L to listOf(true, false, false, false)
+        )
+
+        val hit = findNearestExpectedHit(
+            tapTimeMs = 1_990L,
+            rhythmClock = clock,
+            targetRhythmForBar = { bar -> patterns.getValue(bar.coerceIn(0L, 1L)) }
+        )
+
+        assertEquals(1L, hit.absoluteBarIndex)
+        assertEquals(0, hit.stepIndex)
+        assertEquals(10L, hit.distanceMs)
+    }
+
+    @Test
+    fun completedBarOutcome_requiresEveryUniqueHitAndNoMiss() {
+        val rhythm = listOf(true, false, true, true)
+        val complete = BarPerformance().also {
+            it.successfulHitIndices.addAll(listOf(0, 2, 3))
+        }
+        val duplicateOnly = BarPerformance().also {
+            it.successfulHitIndices.addAll(listOf(0, 2))
+        }
+        val completeWithMiss = BarPerformance().also {
+            it.successfulHitIndices.addAll(listOf(0, 2, 3))
+            it.hadMiss = true
+        }
+
+        assertEquals(
+            CompletedBarOutcome(true, 3),
+            completedBarOutcome(complete, rhythm, 2, 4)
+        )
+        assertEquals(
+            CompletedBarOutcome(false, 0),
+            completedBarOutcome(duplicateOnly, rhythm, 2, 4)
+        )
+        assertEquals(
+            CompletedBarOutcome(false, 0),
+            completedBarOutcome(completeWithMiss, rhythm, 2, 4)
+        )
+        assertEquals(
+            CompletedBarOutcome(true, 4),
+            completedBarOutcome(complete, rhythm, 4, 4)
+        )
+    }
+
+    @Test
+    fun advanceGameplayQueue_onlyReplacesTheHeadAfterACleanBar() {
+        val baseRhythm = listOf(true, false, true, false)
+        val clock = RhythmClock(stepDurationMs = 250L, stepsPerBar = 4)
+        val initialQueue = List(3) { logicalBar ->
+            val phase = clock.phaseIndexForBar(logicalBar.toLong())
+            QueuedPatternBar(
+                absoluteBarIndex = logicalBar.toLong(),
+                phaseIndex = phase,
+                rhythm = shiftedRhythm(baseRhythm, phase)
+            )
+        }
+        val cleanPerformance = BarPerformance().also {
+            it.successfulHitIndices.addAll(listOf(0, 2))
+        }
+
+        val cleanTransition = advanceGameplayQueue(
+            patternQueue = initialQueue,
+            nextQueuedBar = 3L,
+            performance = cleanPerformance,
+            currentLayerCount = 1,
+            maximumLayerCount = 4,
+            rhythmClock = clock,
+            baseRhythm = baseRhythm,
+            maximumQueueItems = 3
+        )
+        assertEquals(true, cleanTransition.completedWithoutMisses)
+        assertEquals(2, cleanTransition.nextLayerCount)
+        assertEquals(4L, cleanTransition.nextQueuedBar)
+        assertEquals(listOf(1L, 2L, 3L), cleanTransition.patternQueue.map {
+            it.absoluteBarIndex
+        })
+
+        val failedTransition = advanceGameplayQueue(
+            patternQueue = initialQueue,
+            nextQueuedBar = 3L,
+            performance = null,
+            currentLayerCount = 2,
+            maximumLayerCount = 4,
+            rhythmClock = clock,
+            baseRhythm = baseRhythm,
+            maximumQueueItems = 3
+        )
+        assertEquals(false, failedTransition.completedWithoutMisses)
+        assertEquals(0, failedTransition.nextLayerCount)
+        assertEquals(3L, failedTransition.nextQueuedBar)
+        assertEquals(initialQueue, failedTransition.patternQueue)
+    }
+
+    @Test
     fun everySupportedPatternLength_drivesClockPhasingAndQueueTiming() {
         for (stepCount in MIN_PATTERN_STEPS..MAX_PATTERN_STEPS) {
             val rhythm = validateBaseRhythm(

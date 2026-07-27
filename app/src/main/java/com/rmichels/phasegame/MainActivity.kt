@@ -38,9 +38,11 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -57,6 +59,9 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.rmichels.phasegame.ui.theme.PhaseGameTheme
 import com.rmichels.phasegame.audio.AudioBus
 import com.rmichels.phasegame.audio.AudioEngine
@@ -74,7 +79,6 @@ private const val INPUT_COMPENSATION_MS = 10L
 private const val PERFECT_WINDOW_MS = 35L
 private const val GOOD_WINDOW_MS = 70L
 private const val CLOSE_WINDOW_MS = 120L
-private const val REPETITIONS_PER_PHASE = 4L
 private const val MAX_PATTERN_QUEUE_ITEMS = 11
 private const val MISS_QUEUE_RAISE_SLOTS = 0.25f
 internal const val MIN_PATTERN_STEPS = 2
@@ -82,57 +86,6 @@ internal const val MAX_PATTERN_STEPS = 16
 private const val DEFAULT_RHYTHM_DOT_STRIDE_DP = 28f
 private const val MAX_RHYTHM_WIDTH_DP = 336f
 private const val QUEUE_FALL_SLOTS_PER_BAR = 1.2f
-
-/**
- * Converts one monotonic start time into bar, phase, and animation positions.
- * All rhythm systems must use this clock so their timing cannot drift apart.
- */
-internal class RhythmClock(
-    val stepDurationMs: Long,
-    private val stepsPerBar: Int
-) {
-    init {
-        require(stepDurationMs > 0L)
-        require(stepsPerBar > 0)
-    }
-
-    var startTimeMs: Long = 0L
-        private set
-
-    val barDurationMs: Long = stepDurationMs * stepsPerBar
-    val isStarted: Boolean get() = startTimeMs != 0L
-
-    fun start(nowMs: Long = SystemClock.elapsedRealtime()) {
-        startTimeMs = nowMs
-    }
-
-    fun scheduleStart(startAtMs: Long) {
-        startTimeMs = startAtMs
-    }
-
-    fun elapsedMs(nowMs: Long = SystemClock.elapsedRealtime()): Long =
-        (nowMs - startTimeMs).coerceAtLeast(0L)
-
-    fun progressThroughBar(nowMs: Long = SystemClock.elapsedRealtime()): Float =
-        Math.floorMod(elapsedMs(nowMs), barDurationMs).toFloat() / barDurationMs
-
-    fun positionInBarMs(nowMs: Long): Long =
-        Math.floorMod(nowMs - startTimeMs, barDurationMs)
-
-    fun absoluteBarIndex(nowMs: Long): Long =
-        elapsedMs(nowMs) / barDurationMs
-
-    fun phaseIndexForBar(
-        absoluteBarIndex: Long,
-        repetitionsPerPhase: Long = REPETITIONS_PER_PHASE
-    ): Int =
-        ((absoluteBarIndex / repetitionsPerPhase) % stepsPerBar).toInt()
-
-    fun phaseIndex(
-        nowMs: Long,
-        repetitionsPerPhase: Long = REPETITIONS_PER_PHASE
-    ): Int = phaseIndexForBar(absoluteBarIndex(nowMs), repetitionsPerPhase)
-}
 
 internal fun shiftedRhythm(
     baseRhythm: List<Boolean>,
@@ -211,18 +164,18 @@ private enum class AppScreen {
     GAME_OVER
 }
 
-private class BarPerformance {
+internal class BarPerformance {
     val successfulHitIndices = mutableSetOf<Int>()
     var hadMiss = false
 }
 
-private data class ExpectedHit(
+internal data class ExpectedHit(
     val absoluteBarIndex: Long,
     val stepIndex: Int,
     val distanceMs: Long
 )
 
-private data class QueuedPatternBar(
+internal data class QueuedPatternBar(
     val absoluteBarIndex: Long,
     val phaseIndex: Int,
     val rhythm: List<Boolean>
@@ -232,10 +185,10 @@ private data class QueuedPatternBar(
  * Finds the closest valid player attack, including adjacent bars so taps near a
  * bar boundary are credited to the intended pattern and phase.
  */
-private fun findNearestExpectedHit(
+internal fun findNearestExpectedHit(
     tapTimeMs: Long,
     rhythmClock: RhythmClock,
-    targetRhythm: List<Boolean>
+    targetRhythmForBar: (Long) -> List<Boolean>
 ): ExpectedHit {
     val barDurationMs = rhythmClock.barDurationMs
     val tapElapsedMs = rhythmClock.elapsedMs(tapTimeMs)
@@ -245,6 +198,7 @@ private fun findNearestExpectedHit(
         .map { barOffset -> tapAbsoluteBar + barOffset }
         .filter { candidateBar -> candidateBar >= 0L }
         .flatMap { candidateBar ->
+            val targetRhythm = targetRhythmForBar(candidateBar)
             targetRhythm.indices
                 .filter { targetRhythm[it] }
                 .map { hitIndex ->
@@ -259,6 +213,91 @@ private fun findNearestExpectedHit(
                 }
         }
         .minBy { it.distanceMs }
+}
+
+internal data class CompletedBarOutcome(
+    val completedWithoutMisses: Boolean,
+    val nextLayerCount: Int
+)
+
+internal fun completedBarOutcome(
+    performance: BarPerformance?,
+    activeRhythm: List<Boolean>,
+    currentLayerCount: Int,
+    maximumLayerCount: Int
+): CompletedBarOutcome {
+    val completedWithoutMisses =
+        performance != null &&
+            !performance.hadMiss &&
+            performance.successfulHitIndices.size == activeRhythm.count { it }
+    return CompletedBarOutcome(
+        completedWithoutMisses = completedWithoutMisses,
+        nextLayerCount = if (completedWithoutMisses) {
+            minOf(currentLayerCount + 1, maximumLayerCount)
+        } else {
+            0
+        }
+    )
+}
+
+internal data class QueueTransition(
+    val patternQueue: List<QueuedPatternBar>,
+    val nextQueuedBar: Long,
+    val completedWithoutMisses: Boolean,
+    val nextLayerCount: Int
+)
+
+internal fun advanceGameplayQueue(
+    patternQueue: List<QueuedPatternBar>,
+    nextQueuedBar: Long,
+    performance: BarPerformance?,
+    currentLayerCount: Int,
+    maximumLayerCount: Int,
+    rhythmClock: RhythmClock,
+    baseRhythm: List<Boolean>,
+    maximumQueueItems: Int = MAX_PATTERN_QUEUE_ITEMS
+): QueueTransition {
+    val activePattern = patternQueue.firstOrNull()
+        ?: return QueueTransition(
+            patternQueue = emptyList(),
+            nextQueuedBar = nextQueuedBar,
+            completedWithoutMisses = false,
+            nextLayerCount = 0
+        )
+    val outcome = completedBarOutcome(
+        performance = performance,
+        activeRhythm = activePattern.rhythm,
+        currentLayerCount = currentLayerCount,
+        maximumLayerCount = maximumLayerCount
+    )
+    if (!outcome.completedWithoutMisses) {
+        return QueueTransition(
+            patternQueue = patternQueue,
+            nextQueuedBar = nextQueuedBar,
+            completedWithoutMisses = false,
+            nextLayerCount = outcome.nextLayerCount
+        )
+    }
+
+    val updatedQueue = patternQueue.drop(1).toMutableList()
+    var updatedNextQueuedBar = nextQueuedBar
+    if (updatedQueue.size < maximumQueueItems) {
+        val queuedPhase = rhythmClock.phaseIndexForBar(nextQueuedBar)
+        updatedQueue.add(
+            QueuedPatternBar(
+                absoluteBarIndex = nextQueuedBar,
+                phaseIndex = queuedPhase,
+                rhythm = shiftedRhythm(baseRhythm, queuedPhase)
+            )
+        )
+        updatedNextQueuedBar++
+    }
+    return QueueTransition(
+        patternQueue = updatedQueue,
+        nextQueuedBar = updatedNextQueuedBar,
+        completedWithoutMisses = true,
+        nextLayerCount = outcome.nextLayerCount
+    )
 }
 
 class MainActivity : ComponentActivity() {
@@ -475,6 +514,14 @@ internal fun PhaseGameScreen(
             stepsPerBar = baseRhythm.size
         )
     }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    var isLifecycleStarted by remember(lifecycleOwner) {
+        mutableStateOf(
+            lifecycleOwner.lifecycle.currentState.isAtLeast(
+                Lifecycle.State.STARTED
+            )
+        )
+    }
     val phaseMelody = remember(baseRhythm.size) {
         PopRockPhaseMelody(baseRhythm.size)
     }
@@ -523,10 +570,80 @@ internal fun PhaseGameScreen(
     val isAudioLoaded = audioEngine?.isReady == true
     var tapJudgment by remember { mutableStateOf<TapJudgment?>(null) }
     var activeLayerCount by remember { mutableIntStateOf(0) }
+    var lastProcessedAbsoluteBar by remember { mutableLongStateOf(0L) }
+    var nextQueuedBar by remember {
+        mutableLongStateOf(MAX_PATTERN_QUEUE_ITEMS.toLong())
+    }
     val currentAudioPhase =
         patternQueue.firstOrNull()?.phaseIndex ?: 0
     val barPerformances = remember {
         mutableMapOf<Long, BarPerformance>()
+    }
+    val activeRhythmByClockBar = remember {
+        mutableMapOf<Long, List<Boolean>>()
+    }
+
+    fun processCompletedBarsThrough(targetAbsoluteBar: Long) {
+        if (targetAbsoluteBar <= lastProcessedAbsoluteBar) return
+
+        for (
+            completedBar in lastProcessedAbsoluteBar until targetAbsoluteBar
+        ) {
+            val activePattern = patternQueue.firstOrNull() ?: break
+            activeRhythmByClockBar.putIfAbsent(
+                completedBar,
+                activePattern.rhythm
+            )
+            val transition = advanceGameplayQueue(
+                patternQueue = patternQueue,
+                nextQueuedBar = nextQueuedBar,
+                performance = barPerformances.remove(completedBar),
+                currentLayerCount = activeLayerCount,
+                maximumLayerCount = maximumBackingTier,
+                rhythmClock = rhythmClock,
+                baseRhythm = baseRhythm
+            )
+            activeLayerCount = transition.nextLayerCount
+
+            if (transition.completedWithoutMisses) {
+                patternQueue.clear()
+                patternQueue.addAll(transition.patternQueue)
+                nextQueuedBar = transition.nextQueuedBar
+                introCurrentSlot =
+                    (introCurrentSlot - 1f).coerceAtLeast(0f)
+                isQueueDropping = true
+                queueWasRaisedByMiss = false
+            }
+
+            patternQueue.firstOrNull()?.let { nextActivePattern ->
+                activeRhythmByClockBar[completedBar + 1L] =
+                    nextActivePattern.rhythm
+            }
+        }
+        lastProcessedAbsoluteBar = targetAbsoluteBar
+        activeRhythmByClockBar.keys.removeAll { clockBar ->
+            clockBar < targetAbsoluteBar - 2L
+        }
+    }
+
+    DisposableEffect(lifecycleOwner, rhythmClock) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_START -> {
+                    rhythmClock.resume()
+                    isLifecycleStarted = true
+                }
+                Lifecycle.Event.ON_STOP -> {
+                    rhythmClock.pause()
+                    isLifecycleStarted = false
+                }
+                else -> Unit
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
     }
 
     DisposableEffect(
@@ -561,9 +678,15 @@ internal fun PhaseGameScreen(
         isGameplayActive,
         isMetronomePlaying,
         isAudioLoaded,
+        isLifecycleStarted,
         audioConductor
     ) {
-        if (isGameplayActive && isMetronomePlaying && isAudioLoaded) {
+        if (
+            isGameplayActive &&
+            isMetronomePlaying &&
+            isAudioLoaded &&
+            isLifecycleStarted
+        ) {
             audioConductor?.start(rhythmClock.startTimeMs)
         } else {
             audioConductor?.stop()
@@ -583,21 +706,36 @@ internal fun PhaseGameScreen(
                     )
                 )
             }
+            activeRhythmByClockBar[0L] = patternQueue.first().rhythm
+            nextQueuedBar = MAX_PATTERN_QUEUE_ITEMS.toLong()
         }
     }
 
-    LaunchedEffect(isGameplayActive, isMetronomePlaying, isAudioLoaded) {
-        if (!isGameplayActive || !isMetronomePlaying || !isAudioLoaded) {
+    LaunchedEffect(
+        isGameplayActive,
+        isMetronomePlaying,
+        isAudioLoaded,
+        isLifecycleStarted
+    ) {
+        if (
+            !isGameplayActive ||
+            !isMetronomePlaying ||
+            !isAudioLoaded ||
+            !isLifecycleStarted
+        ) {
             playerProgress = 0f
             return@LaunchedEffect
         }
 
-        var currentAbsoluteBar = 0L
-        var previousStepProgress = 0f
-        var nextQueuedBar =
-            (patternQueue.lastOrNull()?.absoluteBarIndex ?: -1L) + 1L
+        var previousStepProgress =
+            rhythmClock.elapsedMs().toFloat() / rhythmClock.stepDurationMs
 
-        while (isGameplayActive && isMetronomePlaying && isAudioLoaded) {
+        while (
+            isGameplayActive &&
+            isMetronomePlaying &&
+            isAudioLoaded &&
+            isLifecycleStarted
+        ) {
             val nowMs = SystemClock.elapsedRealtime()
             val elapsedMs = rhythmClock.elapsedMs(nowMs)
             val absoluteBar = rhythmClock.absoluteBarIndex(nowMs)
@@ -615,49 +753,9 @@ internal fun PhaseGameScreen(
             }
             previousStepProgress = newStepProgress
 
-            // Score completed bars before scheduling the new bar's first step.
-            if (absoluteBar > currentAbsoluteBar) {
-                for (completedBar in currentAbsoluteBar until absoluteBar) {
-                    val performance = barPerformances.remove(completedBar)
-                    val completedPlayerPattern =
-                        patternQueue.firstOrNull()?.rhythm ?: baseRhythm
-                    val requiredHits =
-                        completedPlayerPattern.count { it }
-                    val completedWithoutMisses =
-                        performance != null &&
-                            !performance.hadMiss &&
-                            performance.successfulHitIndices.size == requiredHits
-
-                    activeLayerCount = if (completedWithoutMisses) {
-                        minOf(activeLayerCount + 1, maximumBackingTier)
-                    } else {
-                        0
-                    }
-
-                    if (completedWithoutMisses) {
-                        if (patternQueue.isNotEmpty()) {
-                            patternQueue.removeAt(0)
-                            introCurrentSlot =
-                                (introCurrentSlot - 1f).coerceAtLeast(0f)
-                        }
-                        if (patternQueue.size < MAX_PATTERN_QUEUE_ITEMS) {
-                            val queuedPhase =
-                                rhythmClock.phaseIndexForBar(nextQueuedBar)
-                            patternQueue.add(
-                                QueuedPatternBar(
-                                    absoluteBarIndex = nextQueuedBar,
-                                    phaseIndex = queuedPhase,
-                                    rhythm = shiftedRhythm(baseRhythm, queuedPhase)
-                                )
-                            )
-                            nextQueuedBar++
-                        }
-                        isQueueDropping = true
-                        queueWasRaisedByMiss = false
-                    }
-                }
-                currentAbsoluteBar = absoluteBar
-            }
+            // Process transitions before rendering the new bar. Pointer input
+            // calls the same function, so a tap cannot observe the old queue.
+            processCompletedBarsThrough(absoluteBar)
 
             playerProgress = rhythmClock.progressThroughBar(nowMs)
             delay(16L)
@@ -692,13 +790,20 @@ internal fun PhaseGameScreen(
         }
 
         run {
+            val tapTimeMs = SystemClock.elapsedRealtime()
+            processCompletedBarsThrough(
+                rhythmClock.absoluteBarIndex(tapTimeMs)
+            )
             val compensatedTapTimeMs =
-                SystemClock.elapsedRealtime() - INPUT_COMPENSATION_MS
+                tapTimeMs - INPUT_COMPENSATION_MS
             val nearestExpectedHit = findNearestExpectedHit(
                 tapTimeMs = compensatedTapTimeMs,
                 rhythmClock = rhythmClock,
-                targetRhythm =
-                    patternQueue.firstOrNull()?.rhythm ?: baseRhythm
+                targetRhythmForBar = { clockBar ->
+                    activeRhythmByClockBar[clockBar]
+                        ?: patternQueue.firstOrNull()?.rhythm
+                        ?: baseRhythm
+                }
             )
             val measuredJudgment =
                 TapJudgment.fromDistance(nearestExpectedHit.distanceMs)
@@ -790,6 +895,7 @@ internal fun PhaseGameScreen(
             }
         }
     }
+    val currentHandlePlayerPress by rememberUpdatedState(handlePlayerPress)
 
     BoxWithConstraints(
         modifier = modifier
@@ -827,10 +933,11 @@ internal fun PhaseGameScreen(
 
         LaunchedEffect(
             isAudioLoaded,
+            isLifecycleStarted,
             midpointSlot,
             lineClearanceSlots
         ) {
-            if (!isAudioLoaded || isGameplayActive) {
+            if (!isAudioLoaded || !isLifecycleStarted || isGameplayActive) {
                 return@LaunchedEffect
             }
 
@@ -841,34 +948,37 @@ internal fun PhaseGameScreen(
                 )
             val slowSlotsPerStep =
                 regularQueueSlotsPerStep(baseRhythm.size)
-            val fastStepsToMidpoint = midpointSlot / fastSlotsPerStep
             val targetSlot =
                 midpointSlot + 1f + lineClearanceSlots
-            val slowStepsAfterMidpoint =
-                (targetSlot - midpointSlot) / slowSlotsPerStep
-            val totalIntroSteps =
-                fastStepsToMidpoint + slowStepsAfterMidpoint
+            val remainingIntroSteps = if (introCurrentSlot < midpointSlot) {
+                (midpointSlot - introCurrentSlot) / fastSlotsPerStep +
+                    (targetSlot - midpointSlot) / slowSlotsPerStep
+            } else {
+                (targetSlot - introCurrentSlot).coerceAtLeast(0f) /
+                    slowSlotsPerStep
+            }
             val introDurationMs =
-                (totalIntroSteps * rhythmClock.stepDurationMs)
+                (remainingIntroSteps * rhythmClock.stepDurationMs)
                     .roundToInt()
                     .toLong()
-            val introStartMs = SystemClock.elapsedRealtime()
-            rhythmClock.scheduleStart(introStartMs + introDurationMs)
+            rhythmClock.scheduleStart(
+                SystemClock.elapsedRealtime() + introDurationMs
+            )
+            var previousUpdateMs = SystemClock.elapsedRealtime()
 
             while (!isGameplayActive && introCurrentSlot < targetSlot) {
                 val nowMs = SystemClock.elapsedRealtime()
-                val stepsUntilPlayable =
-                    (rhythmClock.startTimeMs - nowMs).toFloat() /
-                        rhythmClock.stepDurationMs
                 val elapsedSteps =
-                    (totalIntroSteps - stepsUntilPlayable)
-                        .coerceIn(0f, totalIntroSteps)
-                introCurrentSlot = if (elapsedSteps <= fastStepsToMidpoint) {
-                    elapsedSteps * fastSlotsPerStep
+                    (nowMs - previousUpdateMs).coerceAtLeast(0L).toFloat() /
+                        rhythmClock.stepDurationMs
+                previousUpdateMs = nowMs
+                introCurrentSlot = if (introCurrentSlot < midpointSlot) {
+                    minOf(
+                        midpointSlot,
+                        introCurrentSlot + elapsedSteps * fastSlotsPerStep
+                    )
                 } else {
-                    midpointSlot +
-                        (elapsedSteps - fastStepsToMidpoint) *
-                        slowSlotsPerStep
+                    introCurrentSlot + elapsedSteps * slowSlotsPerStep
                 }.coerceAtMost(targetSlot)
 
                 if (introCurrentSlot >= midpointSlot) {
@@ -972,7 +1082,7 @@ internal fun PhaseGameScreen(
                 .pointerInput(isAudioLoaded) {
                     awaitEachGesture {
                         awaitFirstDown(requireUnconsumed = false)
-                        handlePlayerPress()
+                        currentHandlePlayerPress()
                         waitForUpOrCancellation()
                     }
                 },
