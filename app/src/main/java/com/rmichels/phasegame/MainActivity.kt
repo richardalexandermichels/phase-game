@@ -709,7 +709,6 @@ internal fun PhaseGameScreen(
             }
         }
     }
-    val currentHandlePlayerPress by rememberUpdatedState(handlePlayerPress)
 
     BoxWithConstraints(
         modifier = modifier
@@ -743,7 +742,6 @@ internal fun PhaseGameScreen(
             playerTravelDistance / (MAX_PATTERN_QUEUE_ITEMS - 1)
         val midpointSlot = playAreaMidpoint / queueSlotSpacing
         val lineClearanceSlots = 14.dp / queueSlotSpacing
-        val newestQueueIndex = patternQueue.lastIndex
 
         LaunchedEffect(
             isAudioLoaded,
@@ -835,47 +833,14 @@ internal fun PhaseGameScreen(
             }
         }
 
-        val sheetOffsetSlots =
-            introCurrentSlot - newestQueueIndex
-
-        Box(
-            modifier = Modifier
-                .align(Alignment.TopCenter)
-                .offset(y = playAreaMidpoint)
-                .zIndex(1f)
-                .fillMaxWidth()
-                .height(4.dp)
-                .background(MaterialTheme.colorScheme.error)
+        PatternQueueDisplay(
+            patternQueue = patternQueue,
+            currentSlot = introCurrentSlot,
+            queueSlotSpacing = queueSlotSpacing,
+            playAreaMidpoint = playAreaMidpoint,
+            modifier = Modifier.fillMaxSize()
         )
 
-        patternQueue.forEachIndexed { index, queuedBar ->
-            val slotFromTop =
-                newestQueueIndex - index + sheetOffsetSlots
-            val distanceFraction =
-                index.toFloat() / (patternQueue.size - 1).coerceAtLeast(1)
-            val rowOpacity =
-                1f - (kotlin.math.sqrt(distanceFraction) * 0.8f)
-
-            RhythmDots(
-                rhythm = queuedBar.rhythm,
-                playedColor = if (index == 0) {
-                    Color(0xFF00BCD4)
-                } else {
-                    MaterialTheme.colorScheme.primary
-                },
-                modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .offset {
-                        IntOffset(
-                            x = 0,
-                            y = (
-                                queueSlotSpacing.toPx() * slotFromTop
-                                ).roundToInt()
-                        )
-                    }
-                    .alpha(rowOpacity)
-            )
-        }
         Box(
             modifier = Modifier
                 .align(Alignment.TopCenter)
