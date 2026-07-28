@@ -9,8 +9,11 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.unit.dp
+import androidx.core.graphics.rotationMatrix
 
 private const val DEFAULT_RHYTHM_DOT_STRIDE_DP = 28f
 private const val MAX_RHYTHM_WIDTH_DP = 336f

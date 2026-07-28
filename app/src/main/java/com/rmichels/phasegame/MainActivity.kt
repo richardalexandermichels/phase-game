@@ -10,9 +10,6 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -48,7 +45,6 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
@@ -891,23 +887,11 @@ internal fun PhaseGameScreen(
         ) {
             RhythmDots(rhythm = baseRhythm)
         }
-        Box(
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .fillMaxWidth()
-                .fillMaxHeight(0.4f)
-                .background(MaterialTheme.colorScheme.secondaryContainer)
-                .pointerInput(isAudioLoaded) {
-                    awaitEachGesture {
-                        awaitFirstDown(requireUnconsumed = false)
-                        currentHandlePlayerPress()
-                        waitForUpOrCancellation()
-                    }
-                },
-            contentAlignment = Alignment.Center
-        ) {
-            Text(tapJudgment?.label ?: "Tap")
-        }
+        TapArea(
+            judgmentLabel = tapJudgment?.label,
+            onPress = handlePlayerPress,
+            modifier = Modifier.align(Alignment.BottomCenter)
+        )
         Box(
             modifier = Modifier
                 .align(Alignment.TopCenter)
