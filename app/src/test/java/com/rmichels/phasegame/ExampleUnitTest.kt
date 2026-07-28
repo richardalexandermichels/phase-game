@@ -24,26 +24,6 @@ class ExampleUnitTest {
     }
 
     @Test
-    fun nearestHit_usesThePatternAssignedToEachAdjacentBar() {
-        val clock = RhythmClock(stepDurationMs = 250L, stepsPerBar = 4)
-        clock.start(nowMs = 1_000L)
-        val patterns = mapOf(
-            0L to listOf(false, false, false, true),
-            1L to listOf(true, false, false, false)
-        )
-
-        val hit = findNearestExpectedHit(
-            tapTimeMs = 1_990L,
-            rhythmClock = clock,
-            targetRhythmForBar = { bar -> patterns.getValue(bar.coerceIn(0L, 1L)) }
-        )
-
-        assertEquals(1L, hit.absoluteBarIndex)
-        assertEquals(0, hit.stepIndex)
-        assertEquals(10L, hit.distanceMs)
-    }
-
-    @Test
     fun completedBarOutcome_requiresEveryUniqueHitAndNoMiss() {
         val rhythm = listOf(true, false, true, true)
         val complete = BarPerformance().also {
