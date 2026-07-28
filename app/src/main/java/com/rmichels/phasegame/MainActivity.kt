@@ -5,6 +5,10 @@ import android.os.SystemClock
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -13,21 +17,14 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.scaleIn
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -62,14 +59,14 @@ import androidx.compose.ui.zIndex
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
-import com.rmichels.phasegame.ui.theme.PhaseGameTheme
 import com.rmichels.phasegame.audio.AudioBus
 import com.rmichels.phasegame.audio.AudioEngine
 import com.rmichels.phasegame.audio.DefaultAudioMix
-import com.rmichels.phasegame.audio.activeBackingTrackMaxTier
-import com.rmichels.phasegame.audio.activeBackingTrackStepDurationMs
 import com.rmichels.phasegame.audio.NativeAudioEngine
 import com.rmichels.phasegame.audio.SoundCatalog
+import com.rmichels.phasegame.audio.activeBackingTrackMaxTier
+import com.rmichels.phasegame.audio.activeBackingTrackStepDurationMs
+import com.rmichels.phasegame.ui.theme.PhaseGameTheme
 import kotlinx.coroutines.delay
 import kotlin.math.exp
 import kotlin.math.roundToInt
@@ -78,8 +75,6 @@ internal val STEP_DURATION_MS = activeBackingTrackStepDurationMs
 private const val MISS_QUEUE_RAISE_SLOTS = 0.25f
 internal const val MIN_PATTERN_STEPS = 2
 internal const val MAX_PATTERN_STEPS = 16
-private const val DEFAULT_RHYTHM_DOT_STRIDE_DP = 28f
-private const val MAX_RHYTHM_WIDTH_DP = 336f
 private const val QUEUE_FALL_SLOTS_PER_BAR = 1.2f
 
 internal fun shiftedRhythm(
@@ -116,25 +111,6 @@ internal fun regularQueueSlotsPerStep(patternStepCount: Int): Float {
     return QUEUE_FALL_SLOTS_PER_BAR / patternStepCount
 }
 
-internal fun rhythmCursorOffsetDp(
-    barProgress: Float,
-    patternStepCount: Int
-): Float {
-    require(patternStepCount > 0)
-    val dotStride = rhythmDotStrideDp(patternStepCount)
-    val firstDotCenter =
-        -((patternStepCount - 1) * dotStride) / 2f
-    return firstDotCenter +
-        patternStepCount * dotStride * barProgress
-}
-
-internal fun rhythmDotStrideDp(patternStepCount: Int): Float {
-    require(patternStepCount > 0)
-    return minOf(
-        DEFAULT_RHYTHM_DOT_STRIDE_DP,
-        MAX_RHYTHM_WIDTH_DP / patternStepCount
-    )
-}
 private enum class AppScreen {
     TITLE,
     DESIGN,
@@ -951,44 +927,6 @@ internal fun PhaseGameScreen(
                     fontWeight = FontWeight.Bold,
                     fontSize = 64.sp,
                     color = MaterialTheme.colorScheme.primary
-                )
-            }
-        }
-    }
-}
-
-@Composable
-fun RhythmDots(
-    rhythm: List<Boolean>,
-    modifier: Modifier = Modifier,
-    playedColor: Color = MaterialTheme.colorScheme.primary
-) {
-    val dotStride = rhythmDotStrideDp(rhythm.size)
-    val playedDotSize = minOf(18f, dotStride - 4f).dp
-    val silentDotSize = minOf(8f, dotStride - 4f).dp
-
-    Row(
-        modifier = modifier,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        rhythm.forEach { isHit ->
-            Box(
-                modifier = Modifier.size(dotStride.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(
-                            if (isHit) playedDotSize else silentDotSize
-                        )
-                        .background(
-                            color = if (isHit) {
-                                playedColor
-                            } else {
-                                Color.Gray
-                            },
-                            shape = CircleShape
-                        )
                 )
             }
         }

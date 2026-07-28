@@ -79,37 +79,6 @@ class ExampleUnitTest {
     }
 
     @Test
-    fun everySupportedPatternLength_rotatesAndDrawsGenerically() {
-        for (stepCount in MIN_PATTERN_STEPS..MAX_PATTERN_STEPS) {
-            val rhythm = List(stepCount) { index -> index == 0 }
-
-            for (phase in 0 until stepCount) {
-                val shifted = shiftedRhythm(rhythm, phase)
-                assertEquals(stepCount, shifted.size)
-                assertEquals(1, shifted.count { it })
-            }
-            assertEquals(rhythm, shiftedRhythm(rhythm, stepCount))
-
-            val firstDotCenter = rhythmCursorOffsetDp(
-                barProgress = 0f,
-                patternStepCount = stepCount
-            )
-            val dotStride = rhythmDotStrideDp(stepCount)
-            assertTrue(dotStride * stepCount <= 336.0001f)
-            for (step in 0 until stepCount) {
-                assertEquals(
-                    firstDotCenter + step * dotStride,
-                    rhythmCursorOffsetDp(
-                        barProgress = step.toFloat() / stepCount,
-                        patternStepCount = stepCount
-                    ),
-                    0.0001f
-                )
-            }
-        }
-    }
-
-    @Test
     fun everySupportedPatternLength_buildsAndResizesAValidDesign() {
         for (stepCount in MIN_PATTERN_STEPS..MAX_PATTERN_STEPS) {
             val rhythm = List(stepCount) { step -> step % 3 != 2 }
