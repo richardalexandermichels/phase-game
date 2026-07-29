@@ -21,6 +21,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredSize
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
@@ -43,6 +45,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.text.font.FontFamily
@@ -374,6 +377,9 @@ internal fun PhaseGameScreen(
         }
     }
     var playerProgress by remember { mutableFloatStateOf(0f) }
+    var introIndicatorProgress by remember {
+        mutableStateOf<Float?>(null)
+    }
     var introCurrentSlot by remember { mutableFloatStateOf(0f) }
     var isGameplayActive by remember { mutableStateOf(false) }
     var isQueueDropping by remember { mutableStateOf(true) }
@@ -752,7 +758,7 @@ internal fun PhaseGameScreen(
             if (!isAudioLoaded || !isLifecycleStarted || isGameplayActive) {
                 return@LaunchedEffect
             }
-
+            introIndicatorProgress = null
             val fastSlotsPerStep =
                 startupQueueSlotsPerStep(
                     patternStepCount = baseRhythm.size,
@@ -776,6 +782,7 @@ internal fun PhaseGameScreen(
             rhythmClock.scheduleStart(
                 SystemClock.elapsedRealtime() + introDurationMs
             )
+            audioConductor?.start(rhythmClock.startTimeMs)
             var previousUpdateMs = SystemClock.elapsedRealtime()
 
             while (!isGameplayActive && introCurrentSlot < targetSlot) {
@@ -798,6 +805,16 @@ internal fun PhaseGameScreen(
                         (introCurrentSlot - midpointSlot) /
                             (targetSlot - midpointSlot)
                         ).coerceIn(0f, 1f)
+
+                    introIndicatorProgress =
+                        if (countdownProgress >= 0.75f) {
+                            (
+                                    (countdownProgress - 0.75f) / 0.25f
+                                    ).coerceIn(0f, 1f)
+                        } else {
+                            null
+                        }
+
                     startCueText = when {
                         countdownProgress < 0.25f -> "Ready"
                         countdownProgress < 0.50f -> "2"
@@ -814,6 +831,7 @@ internal fun PhaseGameScreen(
             if (remainingMs > 0L) {
                 delay(remainingMs)
             }
+            introIndicatorProgress = null
             isGameplayActive = true
         }
 
@@ -841,6 +859,19 @@ internal fun PhaseGameScreen(
             modifier = Modifier.fillMaxSize()
         )
 
+        RhythmPolygon(
+            rhythm = patternQueue.firstOrNull()?.rhythm ?: baseRhythm,
+            queuedRhythms = patternQueue
+                .map { queuedBar -> queuedBar.rhythm }
+                .ifEmpty { listOf(baseRhythm) },
+            barProgress = playerProgress,
+            isGameplayActive = isGameplayActive,
+            introIndicatorProgress = introIndicatorProgress,
+            modifier = Modifier
+                .fillMaxSize()
+                .zIndex(3f)
+        )
+
         Box(
             modifier = Modifier
                 .align(Alignment.TopCenter)
@@ -854,8 +885,10 @@ internal fun PhaseGameScreen(
         }
         TapArea(
             judgmentLabel = tapJudgment?.label,
-            onPress = handlePlayerPress,
-            modifier = Modifier.align(Alignment.BottomCenter)
+            onPress = { _ ->
+                handlePlayerPress()
+            },
+            modifier = Modifier.fillMaxSize()
         )
         Box(
             modifier = Modifier
