@@ -20,4 +20,38 @@ class PhaseVisualThemeTest {
                 .size
         )
     }
+    @Test
+    fun upcomingPhaseVisual_remainsContinuousWhenQueueAdvances() {
+        val currentRhythm =
+            listOf(true, false, true, false)
+        val upcomingRhythm =
+            listOf(false, true, false, true)
+
+        val queue = listOf(
+            QueuedPatternBar(0L, 0, currentRhythm),
+            QueuedPatternBar(1L, 0, currentRhythm),
+            QueuedPatternBar(2L, 1, upcomingRhythm)
+        )
+
+        val immediatelyBeforeAdvance = upcomingPhaseVisual(
+            queuedPatterns = queue,
+            barProgress = 1f
+        )
+
+        val immediatelyAfterAdvance = upcomingPhaseVisual(
+            queuedPatterns = queue.drop(1),
+            barProgress = 0f
+        )
+
+        assertEquals(
+            0.5f,
+            immediatelyBeforeAdvance?.transitionProgress ?: -1f,
+            0.0001f
+        )
+        assertEquals(
+            0.5f,
+            immediatelyAfterAdvance?.transitionProgress ?: -1f,
+            0.0001f
+        )
+    }
 }

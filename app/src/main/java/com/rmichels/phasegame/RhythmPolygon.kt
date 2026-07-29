@@ -45,6 +45,8 @@ internal fun RhythmPolygon(
     barProgress: Float,
     isGameplayActive: Boolean,
     introIndicatorProgress: Float?,
+    phaseTransitionRecoil: Float,
+    repeatCurrentPatternNextBar: Boolean,
     modifier: Modifier = Modifier,
     centerOverride: Offset? = null,
     polygonRadius: Dp = 120.dp,
@@ -59,12 +61,44 @@ internal fun RhythmPolygon(
     require(indicatorTravelBars > 0f)
     require(phaseVisualThemes.isNotEmpty())
 
+    val visualQueuedPatterns =
+        if (
+            repeatCurrentPatternNextBar &&
+            queuedPatterns.isNotEmpty()
+        ) {
+            listOf(queuedPatterns.first()) + queuedPatterns
+        } else {
+            queuedPatterns
+        }
+
     val currentPhaseIndex =
         queuedPatterns.firstOrNull()?.phaseIndex ?: 0
 
     val currentPhaseTheme = phaseVisualThemes[
         Math.floorMod(currentPhaseIndex, phaseVisualThemes.size)
     ]
+
+    val upcomingPhase = upcomingPhaseVisual(
+        queuedPatterns = visualQueuedPatterns,
+        barProgress = barProgress
+    )?.let { phase ->
+        phase.copy(
+            transitionProgress = (
+                    phase.transitionProgress -
+                            phaseTransitionRecoil
+                    ).coerceIn(0f, 1f)
+        )
+    }
+
+    val upcomingPhaseTheme = upcomingPhase?.let { phase ->
+        phaseVisualThemes[
+            Math.floorMod(
+                phase.phaseIndex,
+                phaseVisualThemes.size
+            )
+        ]
+    }
+
     Canvas(modifier = modifier) {
         val anglePerSide =
             (2.0 * Math.PI / rhythm.size).toFloat()
@@ -114,7 +148,7 @@ internal fun RhythmPolygon(
         val queuedIndicators =
             if (indicatorTimelineActive) {
                 futureRhythmIndicators(
-                    queuedRhythms = queuedPatterns
+                    queuedRhythms = visualQueuedPatterns
                         .map { queuedPattern -> queuedPattern.rhythm }
                         .ifEmpty { listOf(rhythm) },
                     currentStepPosition =
@@ -164,6 +198,21 @@ internal fun RhythmPolygon(
                 x = center.x + vertex.x * radius,
                 y = center.y + vertex.y * radius
             )
+        }
+
+        val upcomingScreenVertices = upcomingPhase?.let { phase ->
+            val rotationOffset =
+                -anglePerSide * (1f - phase.transitionProgress)
+
+            regularPolygonVertices(
+                sideCount = rhythm.size,
+                rotationRadians = rotation + rotationOffset
+            ).map { vertex ->
+                Offset(
+                    x = center.x + vertex.x * radius,
+                    y = center.y + vertex.y * radius
+                )
+            }
         }
 
         val sideInsetFraction = 0.1f
@@ -263,9 +312,67 @@ internal fun RhythmPolygon(
                 )
             }
         }
+        upcomingPhase?.let { phase ->
+            val phaseTheme = upcomingPhaseTheme ?: return@let
+            val phaseVertices = upcomingScreenVertices ?: return@let
+
+            phase.rhythm.forEachIndexed { index, isPlayed ->
+                val nextIndex = (index + 1) % phaseVertices.size
+                val sideStart = phaseVertices[index]
+                val sideEnd = phaseVertices[nextIndex]
+                val sideDeltaX = sideEnd.x - sideStart.x
+                val sideDeltaY = sideEnd.y - sideStart.y
+
+                val insetFraction = if (isPlayed) {
+                    sideInsetFraction
+                } else {
+                    ghostSideInsetFraction
+                }
+
+                val shortenedStart = Offset(
+                    x = sideStart.x + insetFraction * sideDeltaX,
+                    y = sideStart.y + insetFraction * sideDeltaY
+                )
+                val shortenedEnd = Offset(
+                    x = sideEnd.x - insetFraction * sideDeltaX,
+                    y = sideEnd.y - insetFraction * sideDeltaY
+                )
+
+                val extendedStart = pointAtDistanceFromCenter(
+                    shortenedStart,
+                    farDistance
+                )
+                val extendedEnd = pointAtDistanceFromCenter(
+                    shortenedEnd,
+                    farDistance
+                )
+
+                val upcomingPath = Path().apply {
+                    moveTo(center.x, center.y)
+                    lineTo(extendedStart.x, extendedStart.y)
+                    lineTo(extendedEnd.x, extendedEnd.y)
+                    close()
+                }
+
+                val layerAlpha = if (isPlayed) {
+                    phase.transitionProgress
+                } else {
+                    phase.transitionProgress * 0.25f
+                }
+
+                drawPath(
+                    path = upcomingPath,
+                    color = phaseTheme.triangleColor.copy(
+                        alpha = layerAlpha
+                    )
+                )
+            }
+        }
         queuedIndicators.forEach { indicator ->
             val indicatorPhaseIndex =
-                queuedPatterns.getOrNull(indicator.queuedBarOffset)
+                visualQueuedPatterns.getOrNull(
+                    indicator.queuedBarOffset
+                )
                     ?.phaseIndex
                     ?: currentPhaseIndex
 
@@ -275,12 +382,29 @@ internal fun RhythmPolygon(
                     phaseVisualThemes.size
                 )
             ]
+            val isUpcomingPhase =
+                indicatorPhaseIndex == upcomingPhase?.phaseIndex
+
+            val indicatorVertices =
+                if (isUpcomingPhase) {
+                    upcomingScreenVertices ?: screenVertices
+                } else {
+                    screenVertices
+                }
+
+            val indicatorAlpha =
+                if (isUpcomingPhase) {
+                    upcomingPhase?.transitionProgress ?: 1f
+                } else {
+                    1f
+                }
+
             val index = indicator.stepIndex
             val nextIndex =
-                (index + 1) % screenVertices.size
+                (index + 1) % indicatorVertices.size
 
-            val sideStart = screenVertices[index]
-            val sideEnd = screenVertices[nextIndex]
+            val sideStart = indicatorVertices[index]
+            val sideEnd = indicatorVertices[nextIndex]
             val sideDeltaX = sideEnd.x - sideStart.x
             val sideDeltaY = sideEnd.y - sideStart.y
 
@@ -343,7 +467,9 @@ internal fun RhythmPolygon(
 
                 drawPath(
                     path = indicatorPath,
-                    color = indicatorTheme.indicatorColor
+                    color = indicatorTheme.indicatorColor.copy(
+                        alpha = indicatorAlpha
+                    )
                 )
             }
         }

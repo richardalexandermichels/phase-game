@@ -33,3 +33,40 @@ internal fun createPhaseVisualThemes(
         )
     }
 }
+
+internal data class UpcomingPhaseVisual(
+    val phaseIndex: Int,
+    val rhythm: List<Boolean>,
+    val transitionProgress: Float
+)
+
+internal fun upcomingPhaseVisual(
+    queuedPatterns: List<QueuedPatternBar>,
+    barProgress: Float,
+    slideDurationBars: Float = 2f
+): UpcomingPhaseVisual? {
+    require(slideDurationBars > 0f)
+
+    val currentPhaseIndex =
+        queuedPatterns.firstOrNull()?.phaseIndex
+            ?: return null
+
+    val nextPhaseOffset =
+        queuedPatterns.indexOfFirst { queuedPattern ->
+            queuedPattern.phaseIndex != currentPhaseIndex
+        }
+
+    if (nextPhaseOffset < 0) return null
+
+    val upcomingPattern = queuedPatterns[nextPhaseOffset]
+    val barsUntilStart =
+        nextPhaseOffset - barProgress.coerceIn(0f, 1f)
+
+    return UpcomingPhaseVisual(
+        phaseIndex = upcomingPattern.phaseIndex,
+        rhythm = upcomingPattern.rhythm,
+        transitionProgress = (
+                1f - barsUntilStart / slideDurationBars
+                ).coerceIn(0f, 1f)
+    )
+}

@@ -69,6 +69,9 @@ import com.rmichels.phasegame.ui.theme.PhaseGameTheme
 import kotlinx.coroutines.delay
 import kotlin.math.exp
 import kotlin.math.roundToInt
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
 
 internal val STEP_DURATION_MS = activeBackingTrackStepDurationMs
 private const val MISS_QUEUE_RAISE_SLOTS = 0.25f
@@ -387,6 +390,15 @@ internal fun PhaseGameScreen(
     var isGameplayActive by remember { mutableStateOf(false) }
     var isQueueDropping by remember { mutableStateOf(true) }
     var queueWasRaisedByMiss by remember { mutableStateOf(false) }
+    var phaseTransitionMissCount by remember {
+        mutableIntStateOf(0)
+    }
+    var repeatCurrentPatternNextBar by remember {
+        mutableStateOf(false)
+    }
+    val phaseTransitionRecoil = remember {
+        Animatable(0f)
+    }
     var startCueText by remember { mutableStateOf<String?>(null) }
     val patternQueue = remember { mutableStateListOf<QueuedPatternBar>() }
     val isMetronomePlaying = true
@@ -404,6 +416,19 @@ internal fun PhaseGameScreen(
     }
     val activeRhythmByClockBar = remember {
         mutableMapOf<Long, List<Boolean>>()
+    }
+
+    LaunchedEffect(phaseTransitionMissCount) {
+        if (phaseTransitionMissCount > 0) {
+            phaseTransitionRecoil.snapTo(0.45f)
+            phaseTransitionRecoil.animateTo(
+                targetValue = 0f,
+                animationSpec = spring(
+                    dampingRatio = Spring.DampingRatioMediumBouncy,
+                    stiffness = Spring.StiffnessMedium
+                )
+            )
+        }
     }
 
     fun processCompletedBarsThrough(targetAbsoluteBar: Long) {
@@ -443,6 +468,7 @@ internal fun PhaseGameScreen(
                     nextActivePattern.rhythm
             }
         }
+        repeatCurrentPatternNextBar = false
         lastProcessedAbsoluteBar = targetAbsoluteBar
         activeRhythmByClockBar.keys.removeAll { clockBar ->
             clockBar < targetAbsoluteBar - 2L
@@ -648,6 +674,8 @@ internal fun PhaseGameScreen(
             }
             if (judgment == TapJudgment.MISS) {
                 performance.hadMiss = true
+                phaseTransitionMissCount++
+                repeatCurrentPatternNextBar = true
                 activeLayerCount = 0
                 audioConductor?.cancelFuturePercussion()
                 introCurrentSlot =
@@ -869,6 +897,9 @@ internal fun PhaseGameScreen(
             barProgress = playerProgress,
             isGameplayActive = isGameplayActive,
             introIndicatorProgress = introIndicatorProgress,
+            phaseTransitionRecoil = phaseTransitionRecoil.value,
+            repeatCurrentPatternNextBar =
+                repeatCurrentPatternNextBar,
             modifier = Modifier
                 .fillMaxSize()
                 .zIndex(3f)
