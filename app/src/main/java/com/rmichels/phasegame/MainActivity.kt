@@ -342,6 +342,9 @@ internal fun PhaseGameScreen(
     val phaseMelody = remember(baseRhythm.size) {
         PopRockPhaseMelody(baseRhythm.size)
     }
+    val phaseVisualThemes = remember(baseRhythm.size) {
+        createPhaseVisualThemes(baseRhythm.size)
+    }
     val baseAudioSession = remember(audioEngine) {
         audioEngine?.createSession()
     }
@@ -861,9 +864,8 @@ internal fun PhaseGameScreen(
 
         RhythmPolygon(
             rhythm = patternQueue.firstOrNull()?.rhythm ?: baseRhythm,
-            queuedRhythms = patternQueue
-                .map { queuedBar -> queuedBar.rhythm }
-                .ifEmpty { listOf(baseRhythm) },
+            queuedPatterns = patternQueue,
+            phaseVisualThemes = phaseVisualThemes,
             barProgress = playerProgress,
             isGameplayActive = isGameplayActive,
             introIndicatorProgress = introIndicatorProgress,

@@ -40,7 +40,8 @@ internal fun regularPolygonVertices(
 @Composable
 internal fun RhythmPolygon(
     rhythm: List<Boolean>,
-    queuedRhythms: List<List<Boolean>>,
+    queuedPatterns: List<QueuedPatternBar>,
+    phaseVisualThemes: List<PhaseVisualTheme>,
     barProgress: Float,
     isGameplayActive: Boolean,
     introIndicatorProgress: Float?,
@@ -56,6 +57,14 @@ internal fun RhythmPolygon(
 ){
     require(rhythm.size >= 3)
     require(indicatorTravelBars > 0f)
+    require(phaseVisualThemes.isNotEmpty())
+
+    val currentPhaseIndex =
+        queuedPatterns.firstOrNull()?.phaseIndex ?: 0
+
+    val currentPhaseTheme = phaseVisualThemes[
+        Math.floorMod(currentPhaseIndex, phaseVisualThemes.size)
+    ]
     Canvas(modifier = modifier) {
         val anglePerSide =
             (2.0 * Math.PI / rhythm.size).toFloat()
@@ -105,7 +114,9 @@ internal fun RhythmPolygon(
         val queuedIndicators =
             if (indicatorTimelineActive) {
                 futureRhythmIndicators(
-                    queuedRhythms = queuedRhythms,
+                    queuedRhythms = queuedPatterns
+                        .map { queuedPattern -> queuedPattern.rhythm }
+                        .ifEmpty { listOf(rhythm) },
                     currentStepPosition =
                         indicatorCurrentStepPosition
                 )
@@ -194,7 +205,7 @@ internal fun RhythmPolygon(
 
                 drawPath(
                     path = wedgePath,
-                    color = playedColor
+                    color = currentPhaseTheme.triangleColor
                 )
 
                 val thresholdStart =
@@ -248,11 +259,22 @@ internal fun RhythmPolygon(
 
                 drawPath(
                     path = ghostWedgePath,
-                    color = playedColor.copy(alpha = 0.25f)
+                    color = currentPhaseTheme.triangleColor.copy(alpha = 0.25f)
                 )
             }
         }
         queuedIndicators.forEach { indicator ->
+            val indicatorPhaseIndex =
+                queuedPatterns.getOrNull(indicator.queuedBarOffset)
+                    ?.phaseIndex
+                    ?: currentPhaseIndex
+
+            val indicatorTheme = phaseVisualThemes[
+                Math.floorMod(
+                    indicatorPhaseIndex,
+                    phaseVisualThemes.size
+                )
+            ]
             val index = indicator.stepIndex
             val nextIndex =
                 (index + 1) % screenVertices.size
@@ -321,7 +343,7 @@ internal fun RhythmPolygon(
 
                 drawPath(
                     path = indicatorPath,
-                    color = targetColor
+                    color = indicatorTheme.indicatorColor
                 )
             }
         }
