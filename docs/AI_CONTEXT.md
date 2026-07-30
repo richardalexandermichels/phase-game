@@ -8,8 +8,8 @@ coding session. Inspect the referenced source before changing behavior.
 Beat Phaser is a Kotlin/Jetpack Compose Android rhythm game inspired by
 Steve Reich-style phased rhythmic cycles, especially *Clapping Music*. A fixed
 base pattern plays continuously while the player taps the currently phased
-version. The visual language is intentionally abstract: rows of dots, timing
-lines, motion, color, and minimal text.
+version. The visual language is intentionally abstract: radial rhythm wedges,
+inward-moving indicators, phase color, motion, and minimal text.
 
 The developer uses Windows 11, Android Studio, Gradle Kotlin DSL, and a physical
 Google Pixel 8a. They are experienced with JavaScript and C#/.NET but are newer
@@ -20,11 +20,13 @@ before continuing, unless the user explicitly groups several changes.
 ## Current Gameplay
 
 - Title screen: **Start**, **Design**, and **Perfect Mode** toggle.
-- Starting jumps directly to gameplay; the falling queue shows master-clock
-  synchronized `Ready`, `2`, `3`, `4`, `Go!` cues.
+- Starting jumps directly to gameplay. A master-clock-synchronized
+  `Ready`, `2`, `3`, `4`, `Go!` countdown pre-rolls the indicators so the first
+  played step reaches its target at gameplay start.
 - Timing: `250 ms` per step. All gameplay timing derives from one monotonic
   `RhythmClock` based on `SystemClock.elapsedRealtime()`.
-- Supported pattern length: arbitrary values clamped to `2..16`.
+- Supported pattern lengths are `3..16`, matching the minimum three sides
+  required by the polygon renderer.
 - Player pattern is the base Boolean rhythm circularly shifted by phase.
 - Phase advances every `REPETITIONS_PER_PHASE` queued bars (currently `4`).
 - Accuracy windows after `10 ms` input compensation:
@@ -38,13 +40,23 @@ before continuing, unless the user explicitly groups several changes.
   `new_backing_track`, with four complete tier mixes; treat the generated
   catalog, rather than this document, as authoritative because the editor can
   replace it at any time.
-- Misses raise the music queue. If the active row is pushed back to the play
-  area's midpoint line, the game ends.
-- The queue has up to 11 rows and moves like one continuous sheet. The fixed
-  base row is opaque at the top; the tap area occupies the bottom 40%.
-- Active playable row is bright cyan. Upcoming rows are green with decreasing
-  opacity. The moving vertical timing line fades yellow-to-gray each bar.
-- Input is recognized on finger-down, not finger-up.
+- The logical pattern queue still contains up to 11 bars and remains essential
+  to scoring, retries, phase selection, and look-ahead indicators. Its former
+  falling-dot composable is disabled, so the queue is no longer drawn.
+- Misses still raise the hidden queue-position state, but the queue-based game
+  over effect is currently disabled. `GAME_OVER` remains in navigation for a
+  future explicit game-over design.
+- The visible rhythm is a static radial polygon/tunnel. Played steps are opaque
+  wedges; rests are ghost wedges. Trapezoid indicators travel inward and reach
+  a colored threshold at the expected tap time.
+- The next distinct phase fades into the same fixed wedge positions over the
+  final two successful logical bars. A miss produces a visual recoil and keeps
+  the current pattern at the head of the visual queue.
+- A white `BlendMode.Difference` wedge sweeps with eased clock-like ticks to
+  invert the current region. Phase triangle, indicator, and threshold colors
+  come from `PhaseVisualTheme`; static themes are currently enabled.
+- `TapArea` covers the full gameplay surface. Input is recognized on
+  finger-down, not finger-up.
 
 ## Design Mode
 
@@ -57,7 +69,7 @@ playerNotesByPhase: List<List<List<Int>>>
 ```
 
 - Twelve pitch rows use a full D-major diatonic palette across registers.
-- Width is adjustable from 2 through 16.
+- Width is adjustable from 3 through 16.
 - A column contains an ordered pitch list with a maximum of four notes.
 - An empty Base chord makes that rhythm step false. An empty enabled Player
   chord uses the generated phase-melody harmony fallback.
@@ -77,6 +89,9 @@ playerNotesByPhase: List<List<List<Int>>>
 
 ## Audio
 
+- A new AI session changing audio should begin with
+  `docs/AUDIO_SYSTEM_AI_HANDOFF.md`; it records the reviewed runtime paths,
+  native contracts, invariants, and known risks.
 - Developer workflows and API examples are documented in
   `docs/AUDIO_ENGINE_DEVELOPER_GUIDE.md`.
 - Backing-track authoring and installation are documented in
@@ -103,9 +118,10 @@ playerNotesByPhase: List<List<List<Int>>>
   D-major passing tones, and compact melodic movement. Player pitches harmonize
   the corresponding shifted Base notes by a diatonic third, falling back to a
   diatonic fifth whenever the third would duplicate the simultaneous Base note.
-- Perfect, Good, and Close preserve the intended pitch and use separate
-  triangle-wave assets at different levels. Miss uses its dedicated dissonant
-  square-wave sample.
+- Built-in Perfect, Good, and Close preserve the intended pitch and use
+  separate triangle-wave assets at different levels. Designed successful notes
+  currently use their selected pitch asset for all three judgments. Miss uses
+  its dedicated dissonant square-wave sample.
 - The adjacent Rust editor renders one complete mono PCM-16 WAV per tier and
   installs it directly into the game. Runtime backing audio therefore occupies
   one native mixer voice regardless of the authored instrument/chord count.
@@ -128,13 +144,38 @@ playerNotesByPhase: List<List<List<Int>>>
   Curated bark definitions also exist for "error" and "sequence complete," but
   gameplay triggers/buttons for those were removed.
 
+## Visual System
+
+See `docs/VISUAL_SYSTEM.md` for the polygon geometry, indicator timeline,
+phase-transition preview, theme selection, input surface, and safe extension
+points.
+
 ## Source Map
 
 - `app/src/main/java/com/rmichels/phasegame/MainActivity.kt`
   - navigation, title/game-over/game screens
-  - `RhythmClock`, timing helpers, accuracy/scoring
-  - queue movement, layers, input, player audio-event authoring
-  - phase selection, dot visualization
+  - gameplay-session Compose state and orchestration
+  - completed-bar processing, layers, countdown, and player audio events
+- `app/src/main/java/com/rmichels/phasegame/RhythmClock.kt`
+  - authoritative bar, phase, pause/resume, and animation positions
+- `app/src/main/java/com/rmichels/phasegame/TapJudgment.kt`
+  - nearest expected-hit search and Perfect/Good/Close/Miss windows
+- `app/src/main/java/com/rmichels/phasegame/PatternQueue.kt`
+  - queued pattern model, per-bar performance, and clean-bar transitions
+- `app/src/main/java/com/rmichels/phasegame/TapArea.kt`
+  - full-surface pointer-down input
+- `app/src/main/java/com/rmichels/phasegame/RhythmPolygon.kt`
+  - radial wedge geometry, threshold lines, phase overlays, tick wedge, and
+    trapezoid indicator rendering
+- `app/src/main/java/com/rmichels/phasegame/RhythmIndicators.kt`
+  - pure look-ahead indicator schedule derived from queued rhythms
+- `app/src/main/java/com/rmichels/phasegame/PhaseVisualTheme.kt`
+  - generated/resolved phase themes and upcoming-phase fade calculation
+- `app/src/main/java/com/rmichels/phasegame/StaticPhaseVisualThemes.kt`
+  - opt-in static palette in phase order
+- `app/src/main/java/com/rmichels/phasegame/RhythmDots.kt` and
+  `PatternQueueDisplay.kt`
+  - retained legacy dot/falling-queue renderer; currently not composed
 - `app/src/main/java/com/rmichels/phasegame/PopRockPhaseMelody.kt`
   - phase-scoped chord progressions and Base/Player pitch mapping
 - `app/src/main/java/com/rmichels/phasegame/GameAudioConductor.kt`
@@ -149,7 +190,7 @@ playerNotesByPhase: List<List<List<Int>>>
 - `app/src/main/java/com/rmichels/phasegame/DesignScreen.kt`
   - matrices, pages, shared-engine preview, chord tap/diagonal painting
 - `app/src/main/java/com/rmichels/phasegame/PitchPalette.kt`
-  - designed-accuracy playback rates
+  - designed-accuracy playback policy; Good/Close are currently neutral rates
 - `app/src/main/java/com/rmichels/phasegame/AllophoneSpeechSynthesizer.kt`
   - procedural PCM allophone rendering/playback
 - `app/src/main/java/com/rmichels/phasegame/VocalBarks.kt`
@@ -160,20 +201,26 @@ playerNotesByPhase: List<List<List<Int>>>
   - older/generated vocal tooling
 - `C:\MyDocs\BeatPhaserTrackEditor`
   - adjacent Rust backing-track sequencer and direct-install tool
-- `app/src/test/java/com/rmichels/phasegame/ExampleUnitTest.kt`
-  - clock, phasing, 2..16 step, queue, drawing, layer, design, and pagination
-    regressions
+- `app/src/test/java/com/rmichels/phasegame/`
+  - focused clock, judgment, queue, indicator, polygon-geometry, theme,
+    design, melody, audio-runtime, and pagination unit tests
 
 ## Important Invariants
 
 - Do not introduce assumptions that a bar has 12 steps; gameplay must remain
-  generic for every length 2..16.
+  generic for every length 3..16.
 - `baseRhythm`/`GameDesign.baseRhythm` is the rhythm source of truth.
 - Scoring requires the number of successful unique step indices to equal the
   number of `true` values in the active phased pattern; never hard-code a hit
   count.
 - Timing, animation, scheduling, phase, and start cues must share the master
   clock and must not create independent drifting timers.
+- The pattern queue is a gameplay model even while its old visual composable is
+  disabled. Do not remove it merely because the falling rows are hidden.
+- Indicator positions are expressed as steps until hit. Keep countdown and
+  gameplay indicators on that same step-based timeline.
+- Polygon geometry assumes every queued rhythm has the same length as the
+  active rhythm.
 - Keep tap judgment on pointer-down.
 - Chords are limited to `DESIGN_MAX_CHORD_SIZE` (currently 4). Keep drag-paint
   monophonic unless its editing semantics are intentionally redesigned.

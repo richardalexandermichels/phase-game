@@ -18,6 +18,44 @@ internal data class CompletedBarOutcome(
     val nextLayerCount: Int
 )
 
+internal fun isCompletedWithoutMisses(
+    performance: BarPerformance?,
+    activeRhythm: List<Boolean>
+): Boolean =
+    performance != null &&
+            !performance.hadMiss &&
+            performance.successfulHitIndices.size ==
+            activeRhythm.count { it }
+
+internal fun rhythmForJudgmentBar(
+    candidateClockBar: Long,
+    currentClockBar: Long,
+    knownRhythmsByClockBar: Map<Long, List<Boolean>>,
+    patternQueue: List<QueuedPatternBar>,
+    currentPerformance: BarPerformance?,
+    fallbackRhythm: List<Boolean>
+): List<Boolean> {
+    knownRhythmsByClockBar[candidateClockBar]?.let {
+        return it
+    }
+
+    val currentPattern =
+        patternQueue.firstOrNull()?.rhythm ?: fallbackRhythm
+
+    val shouldAdvanceForNextBar =
+        candidateClockBar == currentClockBar + 1L &&
+                isCompletedWithoutMisses(
+                    performance = currentPerformance,
+                    activeRhythm = currentPattern
+                )
+
+    return if (shouldAdvanceForNextBar) {
+        patternQueue.getOrNull(1)?.rhythm ?: currentPattern
+    } else {
+        currentPattern
+    }
+}
+
 internal fun completedBarOutcome(
     performance: BarPerformance?,
     activeRhythm: List<Boolean>,
@@ -25,9 +63,7 @@ internal fun completedBarOutcome(
     maximumLayerCount: Int
 ): CompletedBarOutcome {
     val completedWithoutMisses =
-        performance != null &&
-                !performance.hadMiss &&
-                performance.successfulHitIndices.size == activeRhythm.count { it }
+        isCompletedWithoutMisses(performance, activeRhythm)
     return CompletedBarOutcome(
         completedWithoutMisses = completedWithoutMisses,
         nextLayerCount = if (completedWithoutMisses) {

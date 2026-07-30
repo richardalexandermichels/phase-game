@@ -20,6 +20,29 @@ class PhaseVisualThemeTest {
                 .size
         )
     }
+
+    @Test
+    fun resolvePhaseVisualThemes_usesStaticPaletteInItsDefinedOrder() {
+        val themes = resolvePhaseVisualThemes(
+            phaseCount = 4,
+            useStaticThemes = true
+        )
+
+        assertEquals(STATIC_PHASE_VISUAL_THEMES.take(4), themes)
+    }
+
+    @Test
+    fun resolvePhaseVisualThemes_keepsRandomGeneratorAvailable() {
+        val expected = createPhaseVisualThemes(4, Random(1234))
+        val actual = resolvePhaseVisualThemes(
+            phaseCount = 4,
+            useStaticThemes = false,
+            random = Random(1234)
+        )
+
+        assertEquals(expected, actual)
+    }
+
     @Test
     fun upcomingPhaseVisual_remainsContinuousWhenQueueAdvances() {
         val currentRhythm =

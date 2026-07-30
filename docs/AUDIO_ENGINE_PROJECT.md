@@ -1,6 +1,6 @@
 # Beat Phaser Audio Engine: Architecture and Status
 
-## Status (July 27, 2026)
+## Status (July 30, 2026)
 
 The low-latency audio migration is implemented. Beat Phaser now uses one
 activity-owned native Oboe engine for gameplay, Design preview/audition,
@@ -12,6 +12,13 @@ and startup checks pass. The remaining validation is subjective and long-form
 device testing: listen for balance and timbre, exercise route changes and app
 lifecycle transitions, and monitor latency, jitter, xruns, or phase drift during
 multi-minute play.
+
+For a fresh AI coding session, begin with
+`AUDIO_SYSTEM_AI_HANDOFF.md`. It contains the latest end-to-end review,
+verified asset/runtime facts, and prioritized known risks. In particular, it
+documents the remaining phase-boundary Player-pitch mismatch, missing Android
+audio-focus policy, envelope timing limitation under resampling, fatal startup
+failure behavior, and native/conductor test gaps.
 
 ## Current Architecture
 
@@ -82,13 +89,17 @@ regenerated only when gameplay advances to a new phase. Its rules use D-major
 tones, functional pop-rock progressions such as I-V-vi-IV, chord tones on
 strong positions, and compact passing motion.
 
-Player feedback harmonizes the corresponding shifted Base note by a diatonic
-third. If that pitch would duplicate the simultaneous Base note, it switches to
-a diatonic fifth. Perfect, Good, and Close keep the chosen pitch in key and use
-different asset levels; Miss uses a separate dissonant square-wave asset.
+Built-in Player feedback harmonizes the corresponding shifted Base note by a
+diatonic third. If that pitch would duplicate the simultaneous Base note, it
+switches to a diatonic fifth. Built-in Perfect, Good, and Close keep the chosen
+pitch in key and use different asset levels; Miss uses a separate dissonant
+square-wave asset.
 
 Designed notes bypass random melody selection and use the explicit 12-row
-D-major palette selected in Design Mode.
+D-major palette selected in Design Mode. Designed successful notes currently
+use the same selected-pitch asset and neutral playback rate for Perfect, Good,
+and Close; their judgment remains visible but does not select the built-in
+judgment timbres.
 
 ### Backing tracks
 
@@ -156,7 +167,7 @@ tools/
 - Use timestamped events for scheduled music and immediate events for tap
   feedback.
 - Use sessions to cancel related pending/active sounds.
-- Keep pattern logic generic for game lengths `2..16`.
+- Keep pattern logic generic for game lengths `3..16`.
 - Every backing tier WAV is already a complete mix; never schedule its authored
   component instruments separately in the game.
 - Treat `GeneratedBackingTrackCatalog.kt` as generated output and change the

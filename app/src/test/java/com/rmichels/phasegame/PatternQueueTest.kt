@@ -84,4 +84,62 @@ class PatternQueueTest {
         assertEquals(3L, failedTransition.nextQueuedBar)
         assertEquals(initialQueue, failedTransition.patternQueue)
     }
+
+    @Test
+    fun rhythmForJudgmentBar_usesNextQueuedPatternAfterCleanCurrentBar() {
+        val currentRhythm =
+            listOf(false, false, false, true)
+        val nextRhythm =
+            listOf(true, false, false, false)
+
+        val queue = listOf(
+            QueuedPatternBar(0L, 0, currentRhythm),
+            QueuedPatternBar(1L, 1, nextRhythm)
+        )
+
+        val completePerformance = BarPerformance().also {
+            it.successfulHitIndices.add(3)
+        }
+
+        val result = rhythmForJudgmentBar(
+            candidateClockBar = 21L,
+            currentClockBar = 20L,
+            knownRhythmsByClockBar = mapOf(
+                20L to currentRhythm
+            ),
+            patternQueue = queue,
+            currentPerformance = completePerformance,
+            fallbackRhythm = currentRhythm
+        )
+
+        assertEquals(nextRhythm, result)
+    }
+
+    @Test
+    fun rhythmForJudgmentBar_keepsCurrentPatternAfterIncompleteBar() {
+        val currentRhythm =
+            listOf(false, false, false, true)
+        val nextRhythm =
+            listOf(true, false, false, false)
+
+        val queue = listOf(
+            QueuedPatternBar(0L, 0, currentRhythm),
+            QueuedPatternBar(1L, 1, nextRhythm)
+        )
+
+        val incompletePerformance = BarPerformance()
+
+        val result = rhythmForJudgmentBar(
+            candidateClockBar = 21L,
+            currentClockBar = 20L,
+            knownRhythmsByClockBar = mapOf(
+                20L to currentRhythm
+            ),
+            patternQueue = queue,
+            currentPerformance = incompletePerformance,
+            fallbackRhythm = currentRhythm
+        )
+
+        assertEquals(currentRhythm, result)
+    }
 }

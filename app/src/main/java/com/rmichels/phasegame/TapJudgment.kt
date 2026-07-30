@@ -34,7 +34,8 @@ internal data class ExpectedHit(
 internal fun findNearestExpectedHit(
     tapTimeMs: Long,
     rhythmClock: RhythmClock,
-    targetRhythmForBar: (Long) -> List<Boolean>
+    minimumAbsoluteBarIndex: Long = 0L,
+    targetRhythmForBar: (Long) -> List<Boolean>,
 ): ExpectedHit {
     val barDurationMs = rhythmClock.barDurationMs
     val tapElapsedMs = rhythmClock.elapsedMs(tapTimeMs)
@@ -42,7 +43,9 @@ internal fun findNearestExpectedHit(
 
     return (-1L..1L)
         .map { barOffset -> tapAbsoluteBar + barOffset }
-        .filter { candidateBar -> candidateBar >= 0L }
+        .filter { candidateBar ->
+            candidateBar >= minimumAbsoluteBarIndex
+        }
         .flatMap { candidateBar ->
             val targetRhythm = targetRhythmForBar(candidateBar)
             targetRhythm.indices

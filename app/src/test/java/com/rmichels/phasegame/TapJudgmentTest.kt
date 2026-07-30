@@ -55,4 +55,30 @@ class TapJudgmentTest {
             TapJudgment.fromDistance(121L)
         )
     }
+
+    @Test
+    fun nearestHit_doesNotReturnAnAlreadyFinalizedBar() {
+        val clock = RhythmClock(
+            stepDurationMs = 250L,
+            stepsPerBar = 4
+        )
+        clock.start(nowMs = 1_000L)
+
+        val patterns = mapOf(
+            0L to listOf(false, false, false, true),
+            1L to listOf(false, false, true, false)
+        )
+
+        val hit = findNearestExpectedHit(
+            tapTimeMs = 2_010L,
+            rhythmClock = clock,
+            minimumAbsoluteBarIndex = 1L,
+            targetRhythmForBar = { bar ->
+                patterns.getValue(bar.coerceIn(0L, 1L))
+            }
+        )
+
+        assertEquals(1L, hit.absoluteBarIndex)
+        assertEquals(2, hit.stepIndex)
+    }
 }

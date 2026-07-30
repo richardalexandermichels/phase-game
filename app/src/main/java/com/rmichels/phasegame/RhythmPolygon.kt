@@ -1,6 +1,7 @@
 package com.rmichels.phasegame
 
 
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.foundation.Canvas
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
@@ -11,6 +12,7 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.graphics.BlendMode
 
 internal data class PolygonVertex(
     val x: Float,
@@ -44,7 +46,7 @@ internal fun RhythmPolygon(
     phaseVisualThemes: List<PhaseVisualTheme>,
     barProgress: Float,
     isGameplayActive: Boolean,
-    introIndicatorProgress: Float?,
+    introIndicatorStepPosition: Float?,
     phaseTransitionRecoil: Float,
     repeatCurrentPatternNextBar: Boolean,
     modifier: Modifier = Modifier,
@@ -53,8 +55,6 @@ internal fun RhythmPolygon(
     indicatorTargetRadius: Dp = 48.dp,
     indicatorThickness: Dp = 24.dp,
     indicatorTravelBars: Float = 4f,
-    playedColor: Color = MaterialTheme.colorScheme.primary,
-    targetColor: Color = MaterialTheme.colorScheme.error,
     strokeWidth: Dp = 8.dp
 ){
     require(rhythm.size >= 3)
@@ -132,15 +132,14 @@ internal fun RhythmPolygon(
 
         val indicatorTimelineActive =
             isGameplayActive ||
-                    introIndicatorProgress != null
+                    introIndicatorStepPosition != null
 
         val indicatorCurrentStepPosition =
             when {
                 isGameplayActive -> currentStepPosition
 
-                introIndicatorProgress != null ->
-                    -indicatorTravelSteps *
-                            (1f - introIndicatorProgress)
+                introIndicatorStepPosition != null ->
+                    introIndicatorStepPosition
 
                 else -> 0f
             }
@@ -200,23 +199,15 @@ internal fun RhythmPolygon(
             )
         }
 
-        val upcomingScreenVertices = upcomingPhase?.let { phase ->
-            val rotationOffset =
-                -anglePerSide * (1f - phase.transitionProgress)
-
-            regularPolygonVertices(
-                sideCount = rhythm.size,
-                rotationRadians = rotation + rotationOffset
-            ).map { vertex ->
-                Offset(
-                    x = center.x + vertex.x * radius,
-                    y = center.y + vertex.y * radius
-                )
+        val upcomingScreenVertices =
+            if (upcomingPhase != null) {
+                screenVertices
+            } else {
+                null
             }
-        }
 
-        val sideInsetFraction = 0.1f
-        val ghostSideInsetFraction = 0.42f
+        val sideInsetFraction = 0.05f
+        val ghostSideInsetFraction = 0.05f
         require(sideInsetFraction in 0f..0.5f)
         require(ghostSideInsetFraction in 0f..0.5f)
 
@@ -268,11 +259,13 @@ internal fun RhythmPolygon(
                         targetDistance
                     )
                 drawLine(
-                    color = targetColor.copy(alpha = 0.35f),
+                    color = currentPhaseTheme.targetColor.copy(
+                        alpha = 0.65f
+                    ),
                     start = thresholdStart,
                     end = thresholdEnd,
-                    strokeWidth = 2.dp.toPx(),
-                    cap = StrokeCap.Square
+                    strokeWidth = 8.dp.toPx(),
+                    cap = StrokeCap.Round
                 )
             } else {
                 val ghostShortenedStart = Offset(
@@ -368,6 +361,120 @@ internal fun RhythmPolygon(
                 )
             }
         }
+
+//        val clockHandStep =
+//            (
+//                    barProgress.coerceIn(0f, 0.999999f) *
+//                            rhythm.size
+//                    ).toInt()
+//
+//        val clockHandAngle =
+//            (-Math.PI / 2.0).toFloat() +
+//                    clockHandStep * anglePerSide
+//
+//        val clockHandEnd = Offset(
+//            x = center.x +
+//                    kotlin.math.cos(clockHandAngle) * farDistance,
+//            y = center.y +
+//                    kotlin.math.sin(clockHandAngle) * farDistance
+//        )
+//
+//        drawLine(
+//            color = currentPhaseTheme.clockHandColor,
+//            start = center,
+//            end = clockHandEnd,
+//            strokeWidth = 5.dp.toPx(),
+//            cap = StrokeCap.Round
+//        )
+        val clockStepPosition =
+            barProgress.coerceIn(0f, 0.999999f) *
+                    rhythm.size
+
+        val clockHandStep =
+            clockStepPosition.toInt()
+
+        val progressThroughCurrentStep =
+            clockStepPosition - clockHandStep
+
+        val tickDurationFraction = 0.80f
+        val tickTransitionStart =
+            1f - tickDurationFraction
+
+        val tickEaseProgress =
+            FastOutSlowInEasing.transform(
+                (
+                        (progressThroughCurrentStep -
+                                tickTransitionStart) /
+                                tickDurationFraction
+                        ).coerceIn(0f, 1f)
+            )
+
+        val tickRotationOffset =
+            anglePerSide * tickEaseProgress
+
+        val tickVertices = regularPolygonVertices(
+            sideCount = rhythm.size,
+            rotationRadians = rotation + tickRotationOffset
+        ).map { vertex ->
+            Offset(
+                x = center.x + vertex.x * radius,
+                y = center.y + vertex.y * radius
+            )
+        }
+
+        val tickNextIndex =
+            (clockHandStep + 1) % screenVertices.size
+
+        val tickSideStart = tickVertices[clockHandStep]
+        val tickSideEnd = tickVertices[tickNextIndex]
+
+        val tickSideDeltaX =
+            tickSideEnd.x - tickSideStart.x
+        val tickSideDeltaY =
+            tickSideEnd.y - tickSideStart.y
+
+        val tickBaseWidthFraction = 0.25f
+
+        val tickInsetFraction =
+            (1f - tickBaseWidthFraction) / 2f
+
+        val tickShortenedStart = Offset(
+            x = tickSideStart.x +
+                    tickInsetFraction * tickSideDeltaX,
+            y = tickSideStart.y +
+                    tickInsetFraction * tickSideDeltaY
+        )
+
+        val tickShortenedEnd = Offset(
+            x = tickSideEnd.x -
+                    tickInsetFraction * tickSideDeltaX,
+            y = tickSideEnd.y -
+                    tickInsetFraction * tickSideDeltaY
+        )
+
+        val tickExtendedStart = pointAtDistanceFromCenter(
+            tickShortenedStart,
+            farDistance
+        )
+
+        val tickExtendedEnd = pointAtDistanceFromCenter(
+            tickShortenedEnd,
+            farDistance
+        )
+
+        val tickPath = Path().apply {
+            moveTo(center.x, center.y)
+            lineTo(tickExtendedStart.x, tickExtendedStart.y)
+            lineTo(tickExtendedEnd.x, tickExtendedEnd.y)
+            close()
+        }
+
+        drawPath(
+            path = tickPath,
+            color = Color.White,
+            blendMode = BlendMode.Difference
+        )
+
         queuedIndicators.forEach { indicator ->
             val indicatorPhaseIndex =
                 visualQueuedPatterns.getOrNull(

@@ -4,6 +4,10 @@ This guide explains the current audio system, how to create or import sounds,
 and how to use the engine safely from Kotlin. It describes the implementation
 after the Oboe migration.
 
+An AI coding session should read `AUDIO_SYSTEM_AI_HANDOFF.md` first. That file
+is the reviewed architectural handoff and known-risk list; this guide is the
+task-oriented development reference.
+
 ## Quick Answers
 
 ### Do generated tones still need the external script?
@@ -267,6 +271,12 @@ Calculate their absolute elapsed-realtime timestamp and submit them early.
 `playbackRate` changes pitch and duration together. It is conventional sample
 resampling, not time stretching.
 
+Current native envelope implementation caveat: `attackMs` and `releaseMs` are
+converted using the output sample rate but evaluated against resampled source
+position. Their wall-clock duration is therefore not exact when playback rate
+is not `1f`. Existing call sites leave both at zero. Correct the native unit
+conversion and add tests before relying on timed envelopes with pitched audio.
+
 The mixer applies a soft `tanh` limiter after summing voices. Excessive gains
 will therefore compress/distort instead of overflowing, but that is not a
 substitute for sensible mix levels.
@@ -490,6 +500,11 @@ The engine does not yet provide:
 - smooth release when canceling a session;
 - a developer diagnostics UI;
 - build-time validation of every WAV asset.
+
+The app also does not yet request Android audio focus, implement ducking or
+interruption policy, listen for becoming-noisy routes, or calibrate Bluetooth
+output latency. Native Oboe route recovery exists, but those app-level policies
+remain future work.
 
 These can be added without moving game rules into C++, but callback safety and
 bounded memory must be preserved.

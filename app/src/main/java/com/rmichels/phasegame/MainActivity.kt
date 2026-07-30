@@ -75,7 +75,7 @@ import androidx.compose.animation.core.spring
 
 internal val STEP_DURATION_MS = activeBackingTrackStepDurationMs
 private const val MISS_QUEUE_RAISE_SLOTS = 0.25f
-internal const val MIN_PATTERN_STEPS = 2
+internal const val MIN_PATTERN_STEPS = 3
 internal const val MAX_PATTERN_STEPS = 16
 private const val QUEUE_FALL_SLOTS_PER_BAR = 1.2f
 
@@ -346,7 +346,7 @@ internal fun PhaseGameScreen(
         PopRockPhaseMelody(baseRhythm.size)
     }
     val phaseVisualThemes = remember(baseRhythm.size) {
-        createPhaseVisualThemes(baseRhythm.size)
+        resolvePhaseVisualThemes(baseRhythm.size)
     }
     val baseAudioSession = remember(audioEngine) {
         audioEngine?.createSession()
@@ -383,7 +383,7 @@ internal fun PhaseGameScreen(
         }
     }
     var playerProgress by remember { mutableFloatStateOf(0f) }
-    var introIndicatorProgress by remember {
+    var introIndicatorStepPosition by remember {
         mutableStateOf<Float?>(null)
     }
     var introCurrentSlot by remember { mutableFloatStateOf(0f) }
@@ -640,18 +640,27 @@ internal fun PhaseGameScreen(
 
         run {
             val tapTimeMs = SystemClock.elapsedRealtime()
-            processCompletedBarsThrough(
-                rhythmClock.absoluteBarIndex(tapTimeMs)
-            )
             val compensatedTapTimeMs =
                 tapTimeMs - INPUT_COMPENSATION_MS
+
+            val currentClockBar =
+                rhythmClock.absoluteBarIndex(compensatedTapTimeMs)
+
+            processCompletedBarsThrough(currentClockBar)
+
             val nearestExpectedHit = findNearestExpectedHit(
                 tapTimeMs = compensatedTapTimeMs,
                 rhythmClock = rhythmClock,
-                targetRhythmForBar = { clockBar ->
-                    activeRhythmByClockBar[clockBar]
-                        ?: patternQueue.firstOrNull()?.rhythm
-                        ?: baseRhythm
+                minimumAbsoluteBarIndex = lastProcessedAbsoluteBar,
+                targetRhythmForBar = { candidateClockBar ->
+                    rhythmForJudgmentBar(
+                        candidateClockBar = candidateClockBar,
+                        currentClockBar = currentClockBar,
+                        knownRhythmsByClockBar = activeRhythmByClockBar,
+                        patternQueue = patternQueue,
+                        currentPerformance = barPerformances[currentClockBar],
+                        fallbackRhythm = baseRhythm
+                    )
                 }
             )
             val measuredJudgment =
@@ -755,26 +764,28 @@ internal fun PhaseGameScreen(
         // Keep the entire 24 dp row plus a 4 dp gap above the input area.
         val playerTravelDistance = maxHeight * 0.6f - 28.dp
         val playAreaMidpoint = maxHeight * 0.3f
-        val cursorX =
-            rhythmCursorOffsetDp(playerProgress, baseRhythm.size).dp
-        val exponentialFade = (
-            (1f - exp(-5f * playerProgress)) /
-                (1f - exp(-5f))
-            ).coerceIn(0f, 1f)
-        val cursorColor = lerp(
-            Color(0xFFFFD600),
-            Color.Gray,
-            exponentialFade
-        )
 
-        Box(
-            modifier = Modifier
-                .align(Alignment.TopCenter)
-                .offset(x = cursorX)
-                .width(3.dp)
-                .fillMaxHeight(0.6f)
-                .background(cursorColor)
-        )
+//        val cursorX =
+//            rhythmCursorOffsetDp(playerProgress, baseRhythm.size).dp
+//        val exponentialFade = (
+//            (1f - exp(-5f * playerProgress)) /
+//                (1f - exp(-5f))
+//            ).coerceIn(0f, 1f)
+//        val cursorColor = lerp(
+//            Color(0xFFFFD600),
+//            Color.Gray,
+//            exponentialFade
+//        )
+//
+//        Box(
+//            modifier = Modifier
+//                .align(Alignment.TopCenter)
+//                .offset(x = cursorX)
+//                .width(3.dp)
+//                .fillMaxHeight(0.6f)
+//                .background(cursorColor)
+//        )
+
         val queueSlotSpacing =
             playerTravelDistance / (MAX_PATTERN_QUEUE_ITEMS - 1)
         val midpointSlot = playAreaMidpoint / queueSlotSpacing
@@ -789,7 +800,7 @@ internal fun PhaseGameScreen(
             if (!isAudioLoaded || !isLifecycleStarted || isGameplayActive) {
                 return@LaunchedEffect
             }
-            introIndicatorProgress = null
+            introIndicatorStepPosition = null
             val fastSlotsPerStep =
                 startupQueueSlotsPerStep(
                     patternStepCount = baseRhythm.size,
@@ -831,20 +842,19 @@ internal fun PhaseGameScreen(
                     introCurrentSlot + elapsedSteps * slowSlotsPerStep
                 }.coerceAtMost(targetSlot)
 
+                val remainingStartMs =
+                    (rhythmClock.startTimeMs - nowMs)
+                        .coerceAtLeast(0L)
+
+                introIndicatorStepPosition =
+                    -remainingStartMs.toFloat() /
+                            rhythmClock.stepDurationMs.toFloat()
+
                 if (introCurrentSlot >= midpointSlot) {
                     val countdownProgress = (
                         (introCurrentSlot - midpointSlot) /
                             (targetSlot - midpointSlot)
                         ).coerceIn(0f, 1f)
-
-                    introIndicatorProgress =
-                        if (countdownProgress >= 0.75f) {
-                            (
-                                    (countdownProgress - 0.75f) / 0.25f
-                                    ).coerceIn(0f, 1f)
-                        } else {
-                            null
-                        }
 
                     startCueText = when {
                         countdownProgress < 0.25f -> "Ready"
@@ -862,33 +872,33 @@ internal fun PhaseGameScreen(
             if (remainingMs > 0L) {
                 delay(remainingMs)
             }
-            introIndicatorProgress = null
+            introIndicatorStepPosition = null
             isGameplayActive = true
         }
 
-        LaunchedEffect(
-            isGameplayActive,
-            queueWasRaisedByMiss,
-            introCurrentSlot,
-            midpointSlot,
-            lineClearanceSlots
-        ) {
-            if (
-                isGameplayActive &&
-                queueWasRaisedByMiss &&
-                introCurrentSlot <= midpointSlot + lineClearanceSlots
-            ) {
-                onGameOver()
-            }
-        }
+//        LaunchedEffect(
+//            isGameplayActive,
+//            queueWasRaisedByMiss,
+//            introCurrentSlot,
+//            midpointSlot,
+//            lineClearanceSlots
+//        ) {
+//            if (
+//                isGameplayActive &&
+//                queueWasRaisedByMiss &&
+//                introCurrentSlot <= midpointSlot + lineClearanceSlots
+//            ) {
+//                onGameOver()
+//            }
+//        }
 
-        PatternQueueDisplay(
-            patternQueue = patternQueue,
-            currentSlot = introCurrentSlot,
-            queueSlotSpacing = queueSlotSpacing,
-            playAreaMidpoint = playAreaMidpoint,
-            modifier = Modifier.fillMaxSize()
-        )
+//        PatternQueueDisplay(
+//            patternQueue = patternQueue,
+//            currentSlot = introCurrentSlot,
+//            queueSlotSpacing = queueSlotSpacing,
+//            playAreaMidpoint = playAreaMidpoint,
+//            modifier = Modifier.fillMaxSize()
+//        )
 
         RhythmPolygon(
             rhythm = patternQueue.firstOrNull()?.rhythm ?: baseRhythm,
@@ -896,7 +906,7 @@ internal fun PhaseGameScreen(
             phaseVisualThemes = phaseVisualThemes,
             barProgress = playerProgress,
             isGameplayActive = isGameplayActive,
-            introIndicatorProgress = introIndicatorProgress,
+            introIndicatorStepPosition = introIndicatorStepPosition,
             phaseTransitionRecoil = phaseTransitionRecoil.value,
             repeatCurrentPatternNextBar =
                 repeatCurrentPatternNextBar,
@@ -905,17 +915,18 @@ internal fun PhaseGameScreen(
                 .zIndex(3f)
         )
 
-        Box(
-            modifier = Modifier
-                .align(Alignment.TopCenter)
-                .zIndex(2f)
-                .fillMaxWidth()
-                .height(56.dp)
-                .background(MaterialTheme.colorScheme.surface),
-            contentAlignment = Alignment.Center
-        ) {
-            RhythmDots(rhythm = baseRhythm)
-        }
+//        Box(
+//            modifier = Modifier
+//                .align(Alignment.TopCenter)
+//                .zIndex(2f)
+//                .fillMaxWidth()
+//                .height(56.dp)
+//                .background(MaterialTheme.colorScheme.surface),
+//            contentAlignment = Alignment.Center
+//        ) {
+//            RhythmDots(rhythm = baseRhythm)
+//        }
+
         TapArea(
             judgmentLabel = tapJudgment?.label,
             onPress = { _ ->

@@ -1,10 +1,17 @@
 package com.rmichels.phasegame
 
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
 
 internal data class PhaseVisualTheme(
     val triangleColor: Color,
-    val indicatorColor: Color
+    val indicatorColor: Color,
+    val targetColor: Color,
+    val clockHandColor: Color = lerp(
+        triangleColor,
+        Color.White,
+        0.65f
+    )
 )
 
 internal fun createPhaseVisualThemes(
@@ -29,9 +36,30 @@ internal fun createPhaseVisualThemes(
                 hue = hue,
                 saturation = 0.90f,
                 value = 1f
+            ),
+            targetColor = Color.hsv(
+                hue = hue,
+                saturation = 0.30f,
+                value = 1f
             )
         )
     }
+}
+
+internal fun resolvePhaseVisualThemes(
+    phaseCount: Int,
+    useStaticThemes: Boolean = USE_STATIC_PHASE_VISUAL_THEMES,
+    random: kotlin.random.Random = kotlin.random.Random.Default
+): List<PhaseVisualTheme> {
+    if (!useStaticThemes) {
+        return createPhaseVisualThemes(phaseCount, random)
+    }
+
+    require(STATIC_PHASE_VISUAL_THEMES.size >= phaseCount) {
+        "Static phase palette has ${STATIC_PHASE_VISUAL_THEMES.size} colors, " +
+            "but the game needs $phaseCount. Export at least $phaseCount colors."
+    }
+    return STATIC_PHASE_VISUAL_THEMES.take(phaseCount)
 }
 
 internal data class UpcomingPhaseVisual(

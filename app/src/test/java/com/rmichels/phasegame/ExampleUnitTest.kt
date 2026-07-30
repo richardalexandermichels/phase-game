@@ -8,6 +8,7 @@ import com.rmichels.phasegame.audio.activeBackingTrackStepDurationMs
 import com.rmichels.phasegame.audio.isLoopBoundary
 import com.rmichels.phasegame.audio.sampleForTier
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import kotlin.random.Random
@@ -327,6 +328,13 @@ class ExampleUnitTest {
                 Math.floorMod(playerNote, 12) in majorPitchClasses
             )
             assertTrue(playerNote != baseNotes[playerStep])
+        }
+    }
+
+    @Test
+    fun validateBaseRhythm_rejectsTwoStepPatterns() {
+        assertThrows(IllegalArgumentException::class.java) {
+            validateBaseRhythm(listOf(true, false))
         }
     }
 
