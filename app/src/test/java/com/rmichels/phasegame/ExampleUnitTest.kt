@@ -2,6 +2,7 @@ package com.rmichels.phasegame
 
 import com.rmichels.phasegame.audio.ACTIVE_BACKING_TRACK_ID
 import com.rmichels.phasegame.audio.GeneratedBackingTrackCatalog
+import com.rmichels.phasegame.audio.SoundCatalog
 import com.rmichels.phasegame.audio.activeBackingTrack
 import com.rmichels.phasegame.audio.activeBackingTrackMaxTier
 import com.rmichels.phasegame.audio.activeBackingTrackStepDurationMs
@@ -262,73 +263,184 @@ class ExampleUnitTest {
     }
 
     @Test
-    fun popRockMelody_remainsStableUntilTheGameplayPhaseChanges() {
+    fun pianoArrangement_remainsStableUntilTheGameplayPhaseChanges() {
         val melody = PopRockPhaseMelody(
             stepCount = 16,
             random = Random(12_345)
         )
-        val firstPhrase = melody.snapshotSemitoneOffsets()
+        val firstBasePhrase = melody.snapshotBaseMidiNotes()
+        val firstPlayerPhrase = melody.snapshotPlayerMidiNotes()
         val firstGeneration = melody.generationCount()
 
         melody.selectPhase(0)
-        assertEquals(firstPhrase, melody.snapshotSemitoneOffsets())
+        assertEquals(firstBasePhrase, melody.snapshotBaseMidiNotes())
+        assertEquals(firstPlayerPhrase, melody.snapshotPlayerMidiNotes())
         assertEquals(firstGeneration, melody.generationCount())
 
         melody.selectPhase(1)
         assertEquals(firstGeneration + 1, melody.generationCount())
-        assertTrue(firstPhrase != melody.snapshotSemitoneOffsets())
     }
 
     @Test
-    fun popRockMelody_usesMajorKeyTonesAndChordAnchors() {
+    fun pianoArrangement_keepsBothHandsInsideTheCurrentChord() {
         val stepCount = 16
         val melody = PopRockPhaseMelody(
             stepCount = stepCount,
             random = Random(98_765)
         )
-        val notes = melody.snapshotSemitoneOffsets()
-        val chordRoots = melody.snapshotChordRoots()
-        val majorPitchClasses = setOf(0, 2, 4, 5, 7, 9, 11)
+        val baseNotes = melody.snapshotBaseMidiNotes()
+        val playerNotes = melody.snapshotPlayerMidiNotes()
+        val chordTones = melody.snapshotChordTones()
+        val tonic = melody.snapshotTonicPitchClass()
+        val scalePitchClasses = melody.snapshotScale().intervals.mapTo(
+            mutableSetOf()
+        ) { interval ->
+            Math.floorMod(tonic + interval, 12)
+        }
 
-        assertTrue(
-            notes.all {
-                Math.floorMod(it, 12) in majorPitchClasses
-            }
-        )
-        chordRoots.indices.forEach { chordPosition ->
-            val chordStart =
-                chordPosition * stepCount / chordRoots.size
-            assertTrue(
-                PopRockPhaseMelody.isChordTone(
-                    notes[chordStart],
-                    chordRoots[chordPosition]
-                )
-            )
+        assertTrue((baseNotes + playerNotes).all { midi ->
+            Math.floorMod(midi, 12) in scalePitchClasses
+        })
+        repeat(stepCount) { step ->
+            val chordPosition =
+                (step * chordTones.size / stepCount)
+                    .coerceAtMost(chordTones.lastIndex)
+            assertTrue(Math.floorMod(baseNotes[step], 12) in
+                chordTones[chordPosition])
+            assertTrue(Math.floorMod(playerNotes[step], 12) in
+                chordTones[chordPosition])
         }
     }
 
     @Test
-    fun playerPhaseNote_isDiatonicAndNeverMatchesSimultaneousBaseNote() {
-        val stepCount = 12
-        val phase = 3
-        val melody = PopRockPhaseMelody(
-            stepCount = stepCount,
-            random = Random(456)
-        )
-        melody.selectPhase(phase)
-        val baseNotes = melody.snapshotSemitoneOffsets()
-        val majorPitchClasses = setOf(0, 2, 4, 5, 7, 9, 11)
-
-        repeat(stepCount) { playerStep ->
-            val playerNote = melody.playerSemitoneForStep(
-                playerStep,
-                phase
+    fun pianoArrangement_keepsLeftAndRightHandsInNonCrossingRanges() {
+        for (stepCount in MIN_PATTERN_STEPS..MAX_PATTERN_STEPS) {
+            val melody = PopRockPhaseMelody(
+                stepCount = stepCount,
+                random = Random(456 + stepCount)
             )
-            assertTrue(
-                Math.floorMod(playerNote, 12) in majorPitchClasses
-            )
-            assertTrue(playerNote != baseNotes[playerStep])
+            repeat(8) { phase ->
+                melody.selectPhase(phase)
+                val baseNotes = melody.snapshotBaseMidiNotes()
+                val playerNotes = melody.snapshotPlayerMidiNotes()
+                assertTrue(baseNotes.all {
+                    it in BASE_PIANO_LOW_MIDI..BASE_PIANO_HIGH_MIDI
+                })
+                assertTrue(playerNotes.all {
+                    it in PLAYER_PIANO_LOW_MIDI..PLAYER_PIANO_HIGH_MIDI
+                })
+                assertTrue(baseNotes.max() < playerNotes.min())
+                repeat(stepCount) { step ->
+                    assertTrue(melody.basePitchIndexForStep(step) in
+                        0 until PIANO_HAND_PITCH_COUNT)
+                    assertTrue(melody.playerPitchIndexForStep(step) in
+                        0 until PIANO_HAND_PITCH_COUNT)
+                }
+            }
         }
+    }
+
+    @Test
+    fun pianoArrangement_modulatesWithAPivotToneAndCompactVoiceLeading() {
+        for (seed in 0 until 32) {
+            val melody = PopRockPhaseMelody(
+                stepCount = 16,
+                random = Random(seed)
+            )
+            repeat(12) { phase ->
+                val previousTonic = melody.snapshotTonicPitchClass()
+                val previousScale = melody.snapshotScale()
+                val previousLastChord =
+                    melody.snapshotChordTones().last()
+                val previousBaseEnd =
+                    melody.snapshotBaseMidiNotes().last()
+                val previousPlayerEnd =
+                    melody.snapshotPlayerMidiNotes().last()
+
+                melody.selectPhase(phase + 1)
+
+                val nextFirstChord =
+                    melody.snapshotChordTones().first()
+                assertTrue(
+                    previousLastChord.intersect(nextFirstChord).isNotEmpty()
+                )
+                assertTrue(
+                    previousTonic != melody.snapshotTonicPitchClass() ||
+                        previousScale != melody.snapshotScale()
+                )
+                assertTrue(
+                    kotlin.math.abs(
+                        melody.snapshotBaseMidiNotes().first() -
+                            previousBaseEnd
+                    ) <= 7
+                )
+                assertTrue(
+                    kotlin.math.abs(
+                        melody.snapshotPlayerMidiNotes().first() -
+                            previousPlayerEnd
+                    ) <= 5
+                )
+            }
+        }
+    }
+
+    @Test
+    fun designScaleFilters_coverChromaticAndPopularScaleRows() {
+        assertEquals(
+            (0 until PIANO_HAND_PITCH_COUNT).toList(),
+            pitchIndicesForScale(
+                BASE_PIANO_LOW_MIDI,
+                rootPitchClass = 0,
+                scale = PianoScalePreset.CHROMATIC
+            )
+        )
+        assertEquals(
+            14,
+            pitchIndicesForScale(
+                PLAYER_PIANO_LOW_MIDI,
+                rootPitchClass = 0,
+                scale = PianoScalePreset.MAJOR
+            ).size
+        )
+        assertEquals(
+            10,
+            pitchIndicesForScale(
+                PLAYER_PIANO_LOW_MIDI,
+                rootPitchClass = 9,
+                scale = PianoScalePreset.MINOR_PENTATONIC
+            ).size
+        )
+        assertEquals("C2", pianoNoteLabel(BASE_PIANO_LOW_MIDI))
+        assertEquals("B3", pianoNoteLabel(BASE_PIANO_HIGH_MIDI))
+        assertEquals("C4", pianoNoteLabel(PLAYER_PIANO_LOW_MIDI))
+        assertEquals("B5", pianoNoteLabel(PLAYER_PIANO_HIGH_MIDI))
+    }
+
+    @Test
+    fun selectableInstrumentSamples_haveUniqueIdsOutsideTheBackingRange() {
+        assertEquals(5, GameInstrument.values().size)
+        GameInstrument.values().forEach { instrument ->
+            assertEquals(
+                PIANO_HAND_PITCH_COUNT,
+                SoundCatalog.baseFor(instrument).size
+            )
+            assertEquals(
+                PIANO_HAND_PITCH_COUNT,
+                SoundCatalog.playerFor(instrument).size
+            )
+        }
+        val instrumentIds = GameInstrument.values().flatMap { instrument ->
+            SoundCatalog.baseFor(instrument) +
+                SoundCatalog.playerFor(instrument)
+        }
+            .map { it.value }
+        val backingIds = GeneratedBackingTrackCatalog.tracks
+            .flatMap { it.tiers }
+            .map { it.sampleId.value }
+
+        assertEquals(instrumentIds.size, instrumentIds.distinct().size)
+        assertTrue(instrumentIds.none { it in backingIds })
+        assertTrue(instrumentIds.all { it in 1 until 320 })
     }
 
     @Test

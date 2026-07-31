@@ -25,9 +25,13 @@ import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Button
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -147,6 +151,24 @@ class MainActivity : ComponentActivity() {
                     var perfectModeEnabled by rememberSaveable {
                         mutableStateOf(false)
                     }
+                    var baseInstrumentOrdinal by rememberSaveable {
+                        mutableIntStateOf(GameInstrument.PIANO.ordinal)
+                    }
+                    var playerInstrumentOrdinal by rememberSaveable {
+                        mutableIntStateOf(GameInstrument.PIANO.ordinal)
+                    }
+                    val baseInstrument = GameInstrument.values()[
+                        baseInstrumentOrdinal.coerceIn(
+                            0,
+                            GameInstrument.values().lastIndex
+                        )
+                    ]
+                    val playerInstrument = GameInstrument.values()[
+                        playerInstrumentOrdinal.coerceIn(
+                            0,
+                            GameInstrument.values().lastIndex
+                        )
+                    ]
                     var draftDesign by rememberSaveable(
                         stateSaver = GameDesignSaver
                     ) {
@@ -166,6 +188,14 @@ class MainActivity : ComponentActivity() {
                             audioEngine = audioEngine,
                             onStart = { appScreen = AppScreen.PLAYING },
                             onOpenDesign = { appScreen = AppScreen.DESIGN },
+                            baseInstrument = baseInstrument,
+                            onSelectBaseInstrument = { instrument ->
+                                baseInstrumentOrdinal = instrument.ordinal
+                            },
+                            playerInstrument = playerInstrument,
+                            onSelectPlayerInstrument = { instrument ->
+                                playerInstrumentOrdinal = instrument.ordinal
+                            },
                             perfectModeEnabled = perfectModeEnabled,
                             onTogglePerfectMode = {
                                 perfectModeEnabled = !perfectModeEnabled
@@ -175,6 +205,8 @@ class MainActivity : ComponentActivity() {
                         AppScreen.DESIGN -> DesignScreen(
                             audioEngine = audioEngine,
                             design = draftDesign,
+                            baseInstrument = baseInstrument,
+                            playerInstrument = playerInstrument,
                             onDesignChange = { updatedDesign ->
                                 draftDesign = updatedDesign
                             },
@@ -191,7 +223,12 @@ class MainActivity : ComponentActivity() {
                         AppScreen.PLAYING -> PhaseGameScreen(
                             audioEngine = audioEngine,
                             onGameOver = { appScreen = AppScreen.GAME_OVER },
+                            onReturnToTitle = {
+                                appScreen = AppScreen.TITLE
+                            },
                             perfectModeEnabled = perfectModeEnabled,
+                            baseInstrument = baseInstrument,
+                            playerInstrument = playerInstrument,
                             gameDesign = committedDesign.takeIf {
                                 hasCommittedDesign
                             },
@@ -228,6 +265,10 @@ internal fun TitleScreen(
     audioEngine: AudioEngine?,
     onStart: () -> Unit,
     onOpenDesign: () -> Unit,
+    baseInstrument: GameInstrument,
+    onSelectBaseInstrument: (GameInstrument) -> Unit,
+    playerInstrument: GameInstrument,
+    onSelectPlayerInstrument: (GameInstrument) -> Unit,
     perfectModeEnabled: Boolean,
     onTogglePerfectMode: () -> Unit,
     modifier: Modifier = Modifier
@@ -264,11 +305,23 @@ internal fun TitleScreen(
             letterSpacing = 2.sp,
             color = MaterialTheme.colorScheme.primary
         )
-        Spacer(modifier = Modifier.height(32.dp))
+        Spacer(modifier = Modifier.height(24.dp))
+        HandInstrumentSelector(
+            label = "Left hand (Base)",
+            selectedInstrument = baseInstrument,
+            onSelectInstrument = onSelectBaseInstrument
+        )
+        Spacer(modifier = Modifier.height(12.dp))
+        HandInstrumentSelector(
+            label = "Right hand (Player)",
+            selectedInstrument = playerInstrument,
+            onSelectInstrument = onSelectPlayerInstrument
+        )
+        Spacer(modifier = Modifier.height(20.dp))
         Button(onClick = onStart) {
             Text("Start")
         }
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(12.dp))
         Button(onClick = onOpenDesign) {
             Text("Design")
         }
@@ -281,6 +334,40 @@ internal fun TitleScreen(
                     "Perfect Mode: Off"
                 }
             )
+        }
+    }
+}
+
+@Composable
+private fun HandInstrumentSelector(
+    label: String,
+    selectedInstrument: GameInstrument,
+    onSelectInstrument: (GameInstrument) -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelLarge
+        )
+        Box {
+            OutlinedButton(onClick = { expanded = true }) {
+                Text(selectedInstrument.displayName)
+            }
+            DropdownMenu(
+                expanded = expanded,
+                onDismissRequest = { expanded = false }
+            ) {
+                GameInstrument.values().forEach { instrument ->
+                    DropdownMenuItem(
+                        text = { Text(instrument.displayName) },
+                        onClick = {
+                            onSelectInstrument(instrument)
+                            expanded = false
+                        }
+                    )
+                }
+            }
         }
     }
 }
@@ -313,7 +400,10 @@ fun GameOverScreen(
 internal fun PhaseGameScreen(
     audioEngine: AudioEngine?,
     onGameOver: () -> Unit,
+    onReturnToTitle: () -> Unit,
     perfectModeEnabled: Boolean,
+    baseInstrument: GameInstrument,
+    playerInstrument: GameInstrument,
     gameDesign: GameDesign?,
     modifier: Modifier = Modifier
 ) {
@@ -345,6 +435,7 @@ internal fun PhaseGameScreen(
     val phaseMelody = remember(baseRhythm.size) {
         PopRockPhaseMelody(baseRhythm.size)
     }
+    val playerSamples = SoundCatalog.playerFor(playerInstrument)
     val phaseVisualThemes = remember(baseRhythm.size) {
         resolvePhaseVisualThemes(baseRhythm.size)
     }
@@ -363,7 +454,8 @@ internal fun PhaseGameScreen(
         percussionAudioSession,
         baseRhythm,
         gameDesign,
-        phaseMelody
+        phaseMelody,
+        baseInstrument
     ) {
         if (
             audioEngine != null &&
@@ -376,7 +468,8 @@ internal fun PhaseGameScreen(
                 percussionSession = percussionAudioSession,
                 baseRhythm = baseRhythm,
                 gameDesign = gameDesign,
-                phaseMelody = phaseMelody
+                phaseMelody = phaseMelody,
+                baseInstrument = baseInstrument
             )
         } else {
             null
@@ -627,11 +720,11 @@ internal fun PhaseGameScreen(
         if (!isGameplayActive || !rhythmClock.isStarted) {
             if (playerAudioSession != null) {
                 audioEngine?.playImmediate(
-                    sampleId = SoundCatalog.PLAYER_PERFECT,
+                    sampleId = playerSamples[
+                        phaseMelody.playerPitchIndexForStep(0)
+                    ],
                     bus = AudioBus.PLAYER,
                     sessionId = playerAudioSession,
-                    playbackRate =
-                        phaseMelody.playbackRateForBaseStep(0),
                     priority = 3
                 )
             }
@@ -709,45 +802,37 @@ internal fun PhaseGameScreen(
                 null
             }
             phaseMelody.selectPhase(currentPhase)
-            val playbackRate = when {
-                judgment == TapJudgment.MISS -> 1f
-                designedPlayerPitches.isNullOrEmpty() ->
-                    phaseMelody.playbackRateForPlayerStep(
-                        nearestExpectedHit.stepIndex,
-                        currentPhase
-                    )
-                judgment == TapJudgment.GOOD ->
-                    DESIGN_GOOD_PLAYBACK_RATE
-                judgment == TapJudgment.CLOSE ->
-                    DESIGN_CLOSE_PLAYBACK_RATE
+            val judgmentGain = when (judgment) {
+                TapJudgment.GOOD -> PLAYER_GOOD_GAIN
+                TapJudgment.CLOSE -> PLAYER_CLOSE_GAIN
                 else -> 1f
             }
             if (playerAudioSession != null) {
                 if (designedPlayerPitches.isNullOrEmpty()) {
                     val sampleId = when (judgment) {
-                        TapJudgment.PERFECT -> SoundCatalog.PLAYER_PERFECT
-                        TapJudgment.GOOD -> SoundCatalog.PLAYER_GOOD
-                        TapJudgment.CLOSE -> SoundCatalog.PLAYER_CLOSE
+                        TapJudgment.PERFECT,
+                        TapJudgment.GOOD,
+                        TapJudgment.CLOSE -> playerSamples[
+                            phaseMelody.playerPitchIndexForStep(
+                                nearestExpectedHit.stepIndex
+                            )
+                        ]
                         TapJudgment.MISS -> SoundCatalog.PLAYER_MISS
                     }
                     audioEngine?.playImmediate(
                         sampleId = sampleId,
                         bus = AudioBus.PLAYER,
                         sessionId = playerAudioSession,
-                        playbackRate = if (judgment == TapJudgment.MISS) {
-                            1f
-                        } else {
-                            playbackRate
-                        },
+                        gain = judgmentGain,
                         priority = 3
                     )
                 } else {
                     designedPlayerPitches.forEach { pitch ->
                         audioEngine?.playImmediate(
-                            sampleId = SoundCatalog.designPlayer[pitch],
+                            sampleId = playerSamples[pitch],
                             bus = AudioBus.PLAYER,
                             sessionId = playerAudioSession,
-                            playbackRate = playbackRate,
+                            gain = judgmentGain,
                             priority = 3
                         )
                     }
@@ -755,6 +840,8 @@ internal fun PhaseGameScreen(
             }
         }
     }
+
+    var gameplayMenuExpanded by remember { mutableStateOf(false) }
 
     BoxWithConstraints(
         modifier = modifier
@@ -956,6 +1043,33 @@ internal fun PhaseGameScreen(
                 )
             }
         }
+        Box(
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(8.dp)
+                .zIndex(10f)
+        ) {
+            TextButton(
+                onClick = { gameplayMenuExpanded = true }
+            ) {
+                Text(
+                    text = "Menu",
+                    style = MaterialTheme.typography.labelSmall
+                )
+            }
+            DropdownMenu(
+                expanded = gameplayMenuExpanded,
+                onDismissRequest = { gameplayMenuExpanded = false }
+            ) {
+                DropdownMenuItem(
+                    text = { Text("Back to start screen") },
+                    onClick = {
+                        gameplayMenuExpanded = false
+                        onReturnToTitle()
+                    }
+                )
+            }
+        }
     }
 }
 
@@ -966,7 +1080,10 @@ fun PhaseGameScreenPreview() {
         PhaseGameScreen(
             audioEngine = null,
             onGameOver = {},
+            onReturnToTitle = {},
             perfectModeEnabled = false,
+            baseInstrument = GameInstrument.PIANO,
+            playerInstrument = GameInstrument.PIANO,
             gameDesign = null
         )
     }

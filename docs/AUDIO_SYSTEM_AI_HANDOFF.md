@@ -108,7 +108,15 @@ Do not introduce wall-clock time, a second metronome, or `delay()` followed by
 5. starts Oboe.
 
 `TitleScreen` creates a Voice session, plays sample 40 immediately, and cancels
-the session when leaving the screen.
+the session when leaving the screen. Separate left/Base and right/Player
+instrument selections are `rememberSaveable` app state and are passed into both
+gameplay and Design preview. They select sample banks only; they do not alter
+rhythm, harmony, progressions, modulation, or note generation.
+
+The gameplay screen has a small top-right menu whose only action returns to the
+title. Leaving gameplay disposes its Base, Percussion, and Player sessions.
+Starting again creates a new `PhaseGameScreen`, so clock, queue, phase melody,
+score, and other remembered gameplay state begin a new cycle.
 
 ### Scheduled gameplay Base music
 
@@ -118,9 +126,14 @@ derives absolute step timestamps from `RhythmClock.startTimeMs` and schedules:
 - a Base sound on each `true` Base step;
 - a complete backing-tier WAV only at a backing-loop boundary.
 
-Built-in Base notes use `SoundCatalog.BASE_FALLBACK` (`player_click.wav`) with a
-phase-melody playback rate. Designed Base chords schedule one `designBase`
-sample per selected pitch at the same timestamp.
+Built-in Base notes use the generated arrangement's left-hand sample from the
+selected 24-note Base bank. Designed Base chords use the same independently
+selected bank and schedule one sample per pitch at the same timestamp.
+
+The first generated phase chooses an independent random key and mode. Each
+later phase uses a scored related-key modulation. Its first chord shares at
+least one pivot pitch class with the preceding final chord, and both hand
+phrases seed their voice-leading from the notes where the prior phase ended.
 
 If the conductor falls more than one step behind, it moves its authoring cursor
 to the current step rather than emitting a stale burst. Native code separately
@@ -132,15 +145,15 @@ drops events more than 40 ms late.
 calls `playImmediate()`, which is still an `AudioEvent` timestamped with the
 current elapsed-realtime nanoseconds.
 
-- Built-in Perfect/Good/Close use samples 2/3/4 with phase-melody pitch.
+- Built-in Perfect/Good/Close use the generated arrangement's right-hand sample
+  from the independently selected 24-note Player bank; Good and Close reduce
+  event gain.
 - Miss uses sample 5 at playback rate 1.
 - Designed successful chords use the selected `designPlayer` samples.
 - Player feedback uses priority 3, the highest current convention.
 
-Important nuance: designed successful notes currently use the same designed
-sample and a playback rate of 1 for Perfect, Good, and Close. Their judgment is
-visible in UI state, but the separate built-in Good/Close timbres are not mixed
-into designed-note feedback.
+Designed successful notes keep the same selected samples for Perfect, Good, and
+Close. Good and Close reduce event gain rather than changing pitch or timbre.
 
 ### Design Mode
 
@@ -208,7 +221,7 @@ Priority affects voice stealing, not volume.
 Fixed capacities in `AudioEngine.h`:
 
 ```text
-samples             64 slots; valid IDs are 1..63
+samples             320 slots; valid IDs are 1..319
 voices              48
 scheduled events    2,048
 command queue       2,048
@@ -235,16 +248,37 @@ logging/JNI, and bounded. Producers communicate only through the command queue.
 1       Base fallback
 2..5    Player Perfect/Good/Close/Miss
 6..9    bass drum, snare, open hat, closed hat
-10..21  designed Base pitches
-22..33  designed Player pitches
+10..21  designed Base C2..B2
+22..33  designed Player C4..B4
 40      procedural title voice
 41..63  generated backing tiers (installer-owned range)
+64..75  designed Base C3..B3
+76..87  designed Player C5..B5
+88..111 Marimba Base C2..B3
+112..135 Marimba Player C4..B5
+136..159 Vibraphone Base C2..B3
+160..183 Vibraphone Player C4..B5
+184..207 Flemish Harpsichord Base C2..B3
+208..231 Flemish Harpsichord Player C4..B5
+232..255 Distorted Guitar Base C2..B3
+256..279 Distorted Guitar Player C4..B5
 ```
 
 The individual drum samples 6..9 are loaded but the current conductor does not
 schedule them; current percussion comes from complete backing-tier WAVs.
 `res/raw/vocal_layer.wav` is present but is not registered in `SoundCatalog` and
 is not a current runtime path.
+
+The pitched assets in IDs 1..4, 10..33, and 64..87 are rendered from the CC0
+VCSL Steinway B pack. IDs 88..135 are VCSL Marimba, IDs 136..183 are VCSL
+hard-mallet Vibraphone, and IDs 184..231 are VCSL Flemish Harpsichord 8′.
+IDs 232..279 are FreePats Distorted Electric Guitar #1.
+`tools/import-pitched-samples.ps1` and the checked-in manifests own those
+reproducible transformations; see
+`docs/PITCHED_SAMPLE_IMPORTER.md` and `docs/THIRD_PARTY_AUDIO.md`.
+`tools/generate-sounds.ps1` is the synthetic Piano alternative and overwrites
+the Piano filenames if run, so rerun the Steinway importer last when the
+recorded Piano bank should remain active.
 
 ## Lifecycle and Route Behavior
 
@@ -277,7 +311,7 @@ crosses the boundary, an early successful hit belonging to the next queued bar
 can therefore use the current phase for:
 
 - `gameDesign.playerNotes(...)`;
-- `PopRockPhaseMelody.playbackRateForPlayerStep(...)`.
+- `PopRockPhaseMelody.playerPitchIndexForStep(...)`.
 
 Judgment and queue credit are correct; only feedback pitch/design lookup can be
 from the wrong phase. A future fix should resolve the phase associated with
@@ -369,7 +403,13 @@ GameAudioConductor.kt
   rolling Base/backing scheduling and Percussion-session rotation
 
 PopRockPhaseMelody.kt
-  synchronized fallback phrase generation and Player harmony
+  synchronized two-hand fallback arrangement generation
+
+PianoPitch.kt
+  hand ranges, note labels, and Design scale presets
+
+GameInstrument.kt
+  title-screen pitched-instrument choices
 
 DesignScreen.kt
   audition and timestamped bar preview

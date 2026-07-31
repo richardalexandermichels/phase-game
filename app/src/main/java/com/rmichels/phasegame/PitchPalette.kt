@@ -1,5 +1,5 @@
 package com.rmichels.phasegame
 
-// Accuracy is communicated by timbre, not by pushing designed notes out of key.
-internal const val DESIGN_GOOD_PLAYBACK_RATE = 1f
-internal const val DESIGN_CLOSE_PLAYBACK_RATE = 1f
+// Accuracy changes level without changing the generated or designed pitch.
+internal const val PLAYER_GOOD_GAIN = 0.82f
+internal const val PLAYER_CLOSE_GAIN = 0.64f

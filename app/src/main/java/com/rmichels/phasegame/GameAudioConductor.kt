@@ -31,12 +31,14 @@ internal class GameAudioConductor(
     percussionSession: AudioSessionId,
     private val baseRhythm: List<Boolean>,
     private val gameDesign: GameDesign?,
-    private val phaseMelody: PopRockPhaseMelody
+    private val phaseMelody: PopRockPhaseMelody,
+    baseInstrument: GameInstrument
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val activeLayerCount = AtomicInteger(0)
     private val currentPercussionSession =
         AtomicLong(percussionSession.value)
+    private val baseSamples = SoundCatalog.baseFor(baseInstrument)
     private var schedulingJob: Job? = null
 
     fun setActiveLayerCount(count: Int) {
@@ -112,12 +114,12 @@ internal class GameAudioConductor(
         if (designedPitches.isNullOrEmpty()) {
             audioEngine.schedule(
                 AudioEvent(
-                    sampleId = SoundCatalog.BASE_FALLBACK,
+                    sampleId = baseSamples[
+                        phaseMelody.basePitchIndexForStep(step)
+                    ],
                     targetElapsedRealtimeNanos = targetNanos,
                     bus = AudioBus.BASE,
                     sessionId = baseSession,
-                    playbackRate =
-                        phaseMelody.playbackRateForBaseStep(step),
                     priority = 1
                 )
             )
@@ -125,7 +127,7 @@ internal class GameAudioConductor(
             designedPitches.forEach { pitch ->
                 audioEngine.schedule(
                     AudioEvent(
-                        sampleId = SoundCatalog.designBase[pitch],
+                        sampleId = baseSamples[pitch],
                         targetElapsedRealtimeNanos = targetNanos,
                         bus = AudioBus.BASE,
                         sessionId = baseSession,

@@ -3,7 +3,7 @@ package com.rmichels.phasegame
 import androidx.compose.runtime.saveable.listSaver
 import kotlin.math.ceil
 
-internal const val DESIGN_PITCH_COUNT = 12
+internal const val DESIGN_PITCH_COUNT = PIANO_HAND_PITCH_COUNT
 internal const val DESIGN_MAX_CHORD_SIZE = 4
 internal const val DESIGN_MIN_CELL_WIDTH_DP = 28f
 
@@ -144,9 +144,9 @@ internal data class GameDesign(
 
         fun fromBaseRhythm(rhythm: List<Boolean>): GameDesign {
             validateBaseRhythm(rhythm)
-            // A3 is the twelfth row in the low-register D-major palette.
+            // C3 sits at the center of the two-octave left-hand range.
             val baseNotes = rhythm.map { isPlayed ->
-                if (isPlayed) listOf(11) else emptyList()
+                if (isPlayed) listOf(12) else emptyList()
             }
             return GameDesign(
                 stepCount = rhythm.size,
@@ -176,7 +176,7 @@ internal data class GameDesign(
 internal val GameDesignSaver = listSaver<GameDesign, Int>(
     save = { design ->
         buildList {
-            add(-2)
+            add(-3)
             add(design.stepCount)
             design.baseNotes.forEach { chord ->
                 add(chord.size)
@@ -191,7 +191,7 @@ internal val GameDesignSaver = listSaver<GameDesign, Int>(
         }
     },
     restore = { saved ->
-        if (saved.first() == -2) {
+        if (saved.first() == -3) {
             val stepCount = saved[1]
             var cursor = 2
             fun readChord(): List<Int> {
@@ -203,16 +203,59 @@ internal val GameDesignSaver = listSaver<GameDesign, Int>(
                 List(stepCount) { readChord() }
             }
             GameDesign(stepCount, baseNotes, playerNotes)
-        } else {
-            // Restore state saved by the original monophonic model.
-            val stepCount = saved.first()
-            var cursor = 1
+        } else if (saved.first() == -2) {
+            // Migrate the original D-major palettes. Old Player notes move up
+            // one octave so restored designs preserve pitch class without
+            // entering the new left-hand range.
+            val oldBaseMidi = intArrayOf(
+                38, 40, 42, 43, 45, 47, 49, 50, 52, 54, 55, 57
+            )
+            val oldPlayerMidi = intArrayOf(
+                50, 52, 54, 55, 57, 59, 61, 62, 64, 66, 67, 69
+            )
+            val stepCount = saved[1]
+            var cursor = 2
+            fun readChord(mapping: IntArray, lowMidi: Int): List<Int> {
+                val count = saved[cursor++]
+                return List(count) {
+                    val oldPitch = saved[cursor++]
+                    val migratedMidi = mapping[oldPitch] +
+                        if (lowMidi == PLAYER_PIANO_LOW_MIDI) 12 else 0
+                    migratedMidi - lowMidi
+                }
+            }
             val baseNotes = List(stepCount) {
-                saved[cursor++].takeIf { it >= 0 }?.let(::listOf).orEmpty()
+                readChord(oldBaseMidi, BASE_PIANO_LOW_MIDI)
             }
             val playerNotes = List(stepCount) {
                 List(stepCount) {
-                    saved[cursor++].takeIf { it >= 0 }?.let(::listOf).orEmpty()
+                    readChord(oldPlayerMidi, PLAYER_PIANO_LOW_MIDI)
+                }
+            }
+            GameDesign(stepCount, baseNotes, playerNotes)
+        } else {
+            // Restore state saved by the original monophonic model.
+            val oldBaseMidi = intArrayOf(
+                38, 40, 42, 43, 45, 47, 49, 50, 52, 54, 55, 57
+            )
+            val oldPlayerMidi = intArrayOf(
+                50, 52, 54, 55, 57, 59, 61, 62, 64, 66, 67, 69
+            )
+            val stepCount = saved.first()
+            var cursor = 1
+            val baseNotes = List(stepCount) {
+                saved[cursor++].takeIf { it >= 0 }?.let { oldPitch ->
+                    listOf(oldBaseMidi[oldPitch] - BASE_PIANO_LOW_MIDI)
+                }.orEmpty()
+            }
+            val playerNotes = List(stepCount) {
+                List(stepCount) {
+                    saved[cursor++].takeIf { it >= 0 }?.let { oldPitch ->
+                        listOf(
+                            oldPlayerMidi[oldPitch] + 12 -
+                                PLAYER_PIANO_LOW_MIDI
+                        )
+                    }.orEmpty()
                 }
             }
             GameDesign(stepCount, baseNotes, playerNotes)

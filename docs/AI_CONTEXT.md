@@ -55,8 +55,11 @@ before continuing, unless the user explicitly groups several changes.
 - A white `BlendMode.Difference` wedge sweeps with eased clock-like ticks to
   invert the current region. Phase triangle, indicator, and threshold colors
   come from `PhaseVisualTheme`; static themes are currently enabled.
-- `TapArea` covers the full gameplay surface. Input is recognized on
-  finger-down, not finger-up.
+- `TapArea` covers the gameplay surface except for the top-right menu control.
+  Input is recognized on finger-down, not finger-up.
+- The small gameplay **Menu** contains only **Back to start screen**. Returning
+  disposes the active gameplay/audio sessions; pressing Start again constructs
+  a fresh clock, queue, phase melody, and gameplay state.
 
 ## Design Mode
 
@@ -68,7 +71,13 @@ baseNotes: List<List<Int>>
 playerNotesByPhase: List<List<List<Int>>>
 ```
 
-- Twelve pitch rows use a full D-major diatonic palette across registers.
+- Each hand has 24 chromatic pitch rows across two octaves: Base C2..B3 and
+  Player C4..B5. The non-overlapping boundary prevents hand crossing.
+- Design can show all chromatic rows or filter them by root plus Major, Natural
+  Minor, Major Pentatonic, Minor Pentatonic, or Blues. Filtering is view-only;
+  it does not delete existing out-of-scale notes.
+- The pitch matrix scrolls vertically; drag its note-label gutter to browse the
+  full chromatic range without painting cells.
 - Width is adjustable from 3 through 16.
 - A column contains an ordered pitch list with a maximum of four notes.
 - An empty Base chord makes that rhythm step false. An empty enabled Player
@@ -84,8 +93,8 @@ playerNotesByPhase: List<List<List<Int>>>
 - **Preview Bar** plays the current Base matrix or Player phase at game tempo.
 - Design edits are draft state. Design's **Play** commits the snapshot and
   starts it. Normal Start uses the built-in rhythm until a design is committed.
-- `GameDesignSaver` preserves chord designs through recreation and restores the
-  legacy monophonic saver format.
+- `GameDesignSaver` preserves chord designs through recreation and migrates the
+  older 12-row chord and monophonic saver formats into the new hand ranges.
 
 ## Audio
 
@@ -104,23 +113,26 @@ playerNotesByPhase: List<List<List<Int>>>
   the UI thread using rolling look-ahead and stale-event suppression.
 - Audio sessions cancel pending/active sounds during preview and navigation.
 - Buses exist for Base, Player, Percussion, Voice, and master gain.
-- Short PCM WAV files are pre-generated in `app/src/main/res/raw`.
-- `tools/generate-sounds.ps1` controls waveform, frequency, volume, duration,
-  attack, and release and invokes FFmpeg. Gameplay notes use a clean
-  PICO-8-like triangle oscillator with a short, soft envelope.
-- Base/player design palettes contain 12 samples each; Player samples are one
-  octave above matching Base samples.
+- Short PCM WAV files are pre-rendered in `app/src/main/res/raw`.
+- Selectable Piano, Marimba, Vibraphone, Flemish Harpsichord, and Distorted
+  Guitar gameplay banks are derived from CC0 recordings.
+  `tools/import-pitched-samples.ps1` renders each complete bank from its
+  checked-in manifest. Separate title-screen selectors choose the left/Base and
+  right/Player timbres independently for generated and designed notes without
+  changing composition generation.
+- Each instrument contains 24 Base samples covering C2..B3 and 24 Player
+  samples covering C4..B5.
 - Built-in base and unset Player notes share `PopRockPhaseMelody`. It generates
   one full-bar phrase per active gameplay phase, repeats it unchanged until the
   player advances the phase, then creates a new phrase.
-- Melody randomness is constrained by functional pop-rock progressions
-  (including I-V-vi-IV and vi-IV-I-V), chord tones on strong positions,
-  D-major passing tones, and compact melodic movement. Player pitches harmonize
-  the corresponding shifted Base notes by a diatonic third, falling back to a
-  diatonic fifth whenever the third would duplicate the simultaneous Base note.
+- The first phase randomly selects a tonic, Major or Natural Minor mode, and a
+  functional progression. Later phases modulate through related keys/modes and
+  choose a first chord with a shared pivot tone. Both hands continue from their
+  prior ending notes with compact voice-leading, preserving an audible key
+  change without treating the next phase as an unrelated song.
 - Built-in Perfect, Good, and Close preserve the intended pitch and use
-  separate triangle-wave assets at different levels. Designed successful notes
-  currently use their selected pitch asset for all three judgments. Miss uses
+  separate piano assets at different levels. Designed successful notes
+  currently use their selected pitch asset for all three judgments. Miss keeps
   its dedicated dissonant square-wave sample.
 - The adjacent Rust editor renders one complete mono PCM-16 WAV per tier and
   installs it directly into the game. Runtime backing audio therefore occupies
@@ -177,7 +189,11 @@ points.
   `PatternQueueDisplay.kt`
   - retained legacy dot/falling-queue renderer; currently not composed
 - `app/src/main/java/com/rmichels/phasegame/PopRockPhaseMelody.kt`
-  - phase-scoped chord progressions and Base/Player pitch mapping
+  - phase-scoped chord progressions and unified two-hand pitch arrangement
+- `app/src/main/java/com/rmichels/phasegame/PianoPitch.kt`
+  - non-crossing hand ranges, note labels, and Design scale presets
+- `app/src/main/java/com/rmichels/phasegame/GameInstrument.kt`
+  - title-screen pitched-instrument choices
 - `app/src/main/java/com/rmichels/phasegame/GameAudioConductor.kt`
   - background master-clock music scheduling and stale-event suppression
 - `app/src/main/java/com/rmichels/phasegame/audio/`
@@ -196,7 +212,9 @@ points.
 - `app/src/main/java/com/rmichels/phasegame/VocalBarks.kt`
   - reusable allophones and curated bark sequences
 - `tools/generate-sounds.ps1`
-  - editable musical/percussion WAV generation
+  - synthetic pitched-tone and Miss WAV alternative
+- `tools/import-pitched-samples.ps1` and `tools/pitched-sample-packs/`
+  - current manifest-driven VCSL piano rendering workflow
 - `tools/generate-vocal.ps1`
   - older/generated vocal tooling
 - `C:\MyDocs\BeatPhaserTrackEditor`

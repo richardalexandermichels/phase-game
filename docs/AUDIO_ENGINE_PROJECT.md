@@ -70,7 +70,7 @@ that arrive more than 40 ms late instead of producing a stale-note burst.
 - Generated backing tracks that consume one mixer voice regardless of their
   authored instrument or chord count.
 
-Fixed native capacities currently allow sample IDs `1..63`. IDs `41..63` are
+Fixed native capacities currently allow sample IDs `1..319`. IDs `41..63` are
 reserved by the backing-track installer, for a maximum of 23 installed tier
 WAVs across all cataloged tracks.
 
@@ -78,28 +78,33 @@ WAVs across all cataloged tracks.
 
 ### Base and Player tones
 
-Built-in Base and unset Player notes use short, pre-generated triangle-wave
-PCM assets with a clean PICO-8-like character. `tools/generate-sounds.ps1`
-generates these assets through FFmpeg; the native engine does not synthesize an
-oscillator at runtime.
+Built-in Base, unset Player notes, and the Design palettes use independently
+selected left/Base and right/Player instruments from the title screen. Choices
+are Steinway B Piano, Marimba, hard-mallet Vibraphone, Flemish Harpsichord 8′,
+and FreePats Distorted Electric Guitar #1. All are CC0; the first four come
+from the Versilian Community Sample Library.
+`tools/import-pitched-samples.ps1` renders the checked-in packs through FFmpeg;
+the native engine does not synthesize an oscillator at runtime. The older
+`tools/generate-sounds.ps1` remains a synthetic Piano-bank alternative.
 
-`PopRockPhaseMelody` generates one complete melody for each active gameplay
-phase. The phrase remains unchanged for all attempts/bars in that phase and is
-regenerated only when gameplay advances to a new phase. Its rules use D-major
-tones, functional pop-rock progressions such as I-V-vi-IV, chord tones on
-strong positions, and compact passing motion.
+`PopRockPhaseMelody` generates one complete two-hand arrangement for each active
+gameplay phase. The phrase remains unchanged for all attempts/bars in that
+phase and is regenerated only when gameplay advances. The initial generation
+chooses a tonic, Major or Natural Minor mode, and a functional progression such
+as I-V-vi-IV. Later generations choose a related modulation (dominant,
+subdominant, relative/parallel mode, or whole-step shift), favor a shared pivot
+tone between boundary chords, and begin near each hand's previous ending note.
+Both hands use compact chord tones from the same chord map.
 
-Built-in Player feedback harmonizes the corresponding shifted Base note by a
-diatonic third. If that pitch would duplicate the simultaneous Base note, it
-switches to a diatonic fifth. Built-in Perfect, Good, and Close keep the chosen
-pitch in key and use different asset levels; Miss uses a separate dissonant
-square-wave asset.
+Base is the left hand in C2..B3; Player is the right hand in C4..B5. Runtime
+selects the matching recorded sample rather than transposing a single root over
+the full range. Perfect, Good, and Close keep the chosen note and change level;
+Miss uses a separate dissonant square-wave asset.
 
-Designed notes bypass random melody selection and use the explicit 12-row
-D-major palette selected in Design Mode. Designed successful notes currently
-use the same selected-pitch asset and neutral playback rate for Perfect, Good,
-and Close; their judgment remains visible but does not select the built-in
-judgment timbres.
+Designed notes bypass random generation and use explicit 24-row chromatic hand
+palettes. The matrix can filter visible rows by six practical scale presets and
+any root without deleting hidden notes. Designed successful notes keep their
+selected pitch while Good and Close reduce event gain.
 
 ### Backing tracks
 
@@ -133,7 +138,9 @@ the full authoring and installation workflow.
 app/src/main/java/com/rmichels/phasegame/
   MainActivity.kt                 Engine ownership and Player events
   GameAudioConductor.kt           Scheduled Base/backing authoring
-  PopRockPhaseMelody.kt           Phase melody and Player harmony
+  PopRockPhaseMelody.kt           Unified two-hand phase arrangement
+  PianoPitch.kt                   Hand ranges, labels, and scale presets
+  GameInstrument.kt               Selectable pitched instruments
   DesignScreen.kt                 Shared-engine audition and preview
   PitchPalette.kt                 Designed-note judgment pitch policy
 
@@ -153,7 +160,9 @@ app/src/main/cpp/
   CMakeLists.txt                  Native build and Oboe link
 
 tools/
-  generate-sounds.ps1             Musical/percussion WAV generation
+  import-pitched-samples.ps1      Pitched instrument pack rendering
+  pitched-sample-packs/           Pitched pack manifests and mappings
+  generate-sounds.ps1             Synthetic tone/Miss alternative
 ```
 
 ## Important Invariants

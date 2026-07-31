@@ -9,21 +9,21 @@ $ToneDurationMs = 300.0
 $ToneAttackMs = 3.0
 $ToneReleaseMs = 170.0
 
-# The fallback Base is rooted at D3. The fallback Player is rooted at F#3;
-# runtime harmony usually places it a diatonic third above its source note.
+# The fallback Base is rooted at D3. Legacy Player judgment assets use F#4;
+# generated gameplay now selects exact notes from the chromatic hand banks.
 $BasePitchHz = 146.832
 $BaseWaveform = "triangle"
 $BaseVolume = 0.38
 
-$PerfectPitchHz = 184.997
+$PerfectPitchHz = 369.994
 $PerfectWaveform = "triangle"
 $PerfectVolume = 0.44
 
-$GoodPitchHz = 184.997
+$GoodPitchHz = 369.994
 $GoodWaveform = "triangle"
 $GoodVolume = 0.36
 
-$ClosePitchHz = 184.997
+$ClosePitchHz = 369.994
 $CloseWaveform = "triangle"
 $CloseVolume = 0.28
 
@@ -35,22 +35,12 @@ $MissAttackMs = 25.0
 $MissReleaseMs = 75.0
 $MissVolume = 0.15
 
-# Twelve D-major rows used by Design Mode. Including G and C# supplies the IV
-# and V chord tones used by the pop-rock progression generator. Player rows
-# are generated one octave above the corresponding base rows.
+# Two chromatic octaves per hand. Base covers C2..B3 (MIDI 36..59), and the
+# Player bank is generated two octaves above it at C4..B5 (MIDI 60..83).
 $DesignBasePitchHz = @(
-    73.416,  # D2
-    82.407,  # E2
-    92.499,  # F#2
-    97.999,  # G2
-    110.000, # A2
-    123.471, # B2
-    138.591, # C#3
-    146.832, # D3
-    164.814, # E3
-    184.997, # F#3
-    195.998, # G3
-    220.000  # A3
+    36..59 | ForEach-Object {
+        440.0 * [Math]::Pow(2.0, ($_ - 69) / 12.0)
+    }
 )
 
 $OutputDirectory = Join-Path $PSScriptRoot "..\app\src\main\res\raw"
@@ -192,7 +182,7 @@ New-GameSound `
 for ($index = 0; $index -lt $DesignBasePitchHz.Count; $index++) {
     $suffix = "{0:D2}" -f $index
     $basePitch = $DesignBasePitchHz[$index]
-    $playerPitch = $basePitch * 2.0
+    $playerPitch = $basePitch * 4.0
 
     New-GameSound `
         -FileName "design_base_$suffix.wav" `

@@ -10,14 +10,20 @@ task-oriented development reference.
 
 ## Quick Answers
 
-### Do generated tones still need the external script?
+### How are the current pitched tones authored?
 
-Yes, for the current musical tone assets.
+The selectable pitched assets come from the CC0 VCSL Steinway B, Marimba,
+hard-mallet Vibraphone, and Flemish Harpsichord 8′ packs plus FreePats
+Distorted Electric Guitar #1. Use
+`tools/import-pitched-samples.ps1` and
+`docs/PITCHED_SAMPLE_IMPORTER.md` to reproduce any installed bank.
 
 The engine plays preloaded PCM samples. It can change their playback rate,
 gain, pan, and envelope, but it does not currently contain a runtime sine,
-triangle, square, or noise oscillator. `tools/generate-sounds.ps1` remains the
-authoring tool for the generated tone and percussion WAV files.
+triangle, square, or noise oscillator. `tools/generate-sounds.ps1` remains an
+alternative authoring tool for the synthetic Piano bank and Miss sound. Running
+it overwrites the Piano files only; rerun the Steinway importer last if the
+recorded Piano pack should remain active.
 
 The script is not required when:
 
@@ -98,7 +104,9 @@ app/src/main/java/com/rmichels/phasegame/audio/
 
 app/src/main/java/com/rmichels/phasegame/
   GameAudioConductor.kt   Background Base/backing-track scheduling
-  PopRockPhaseMelody.kt   Phase-scoped Base melody and Player harmony
+  PopRockPhaseMelody.kt   Phase-scoped two-hand arrangement
+  PianoPitch.kt           Hand ranges, note labels, and scale presets
+  GameInstrument.kt       Title-screen instrument choices
   MainActivity.kt         Engine ownership and player feedback
   DesignScreen.kt         Auditions and whole-bar previews
 
@@ -108,7 +116,9 @@ app/src/main/cpp/
   CMakeLists.txt          Native build and Oboe link
 
 tools/
-  generate-sounds.ps1     Generated tone/percussion asset authoring
+  import-pitched-samples.ps1  Manifest-driven pitched instrument importer
+  pitched-sample-packs/       Reproducible pitched pack manifests
+  generate-sounds.ps1         Synthetic tone/Miss alternative
 
 C:/MyDocs/BeatPhaserTrackEditor/
   Adjacent Rust sequencer, tier renderer, and direct game installer
@@ -116,7 +126,7 @@ C:/MyDocs/BeatPhaserTrackEditor/
 
 ## Sound Creation
 
-### Editing the existing generated tones
+### Switching to the synthetic tone bank
 
 Open `tools/generate-sounds.ps1`. Its main controls include:
 
@@ -126,7 +136,7 @@ Open `tools/generate-sounds.ps1`. Its main controls include:
 - duration;
 - attack;
 - release;
-- the 12-note Design Base palette.
+- the two 24-note chromatic Design hand palettes.
 
 Run it from the repository root:
 
@@ -135,18 +145,19 @@ Run it from the repository root:
 ```
 
 The script regenerates and overwrites the corresponding files in
-`app/src/main/res/raw`. Review the changed WAV files before committing.
+`app/src/main/res/raw`, including the active piano bank. Review the changed WAV
+files before committing. To restore the VCSL piano afterward, rerun
+`tools/import-pitched-samples.ps1`.
 
 Changing the Design Base pitch array also regenerates the Player palette one
 octave above it. Keep the array order aligned with the pitch rows displayed by
 `DesignScreen`.
 
-Gameplay tones use a clean triangle oscillator with a short, soft envelope,
-similar in character to the PICO-8 triangle voice. Base fallback tones are
-rooted at D3; successful Player feedback is rooted at F#3. Good and Close use
-the same pitch as Perfect so timing feedback never pushes the melody out of
-key. The older blended `chip` waveform remains available in the script for
-experimentation.
+The synthetic alternative uses a clean triangle oscillator with a short, soft
+envelope, similar in character to the PICO-8 triangle voice. It produces Base
+C2..B3 and Player C4..B5 banks. Good and Close use the same pitch as Perfect so
+timing feedback never pushes the melody out of key. The older blended `chip`
+waveform remains available in the script for experimentation.
 
 ### Replacing a sound without changing code
 
@@ -158,6 +169,12 @@ app/src/main/res/raw/snare.wav
 ```
 
 changes the sound behind `SoundCatalog.SNARE` without changing Kotlin code.
+
+For a complete pitched-instrument replacement, use the manifest-driven
+`tools/import-pitched-samples.ps1` workflow described in
+`docs/PITCHED_SAMPLE_IMPORTER.md`. It updates the 48 Design notes and built-in
+pitched gameplay tones as one validated set while preserving their filenames
+and sample IDs.
 
 ### Converting a custom sound
 
@@ -198,12 +215,13 @@ Android resource names must use lowercase letters, numbers, and underscores.
 In `SoundCatalog.kt`:
 
 ```kotlin
-val PHASE_COMPLETE = AudioSampleId(41)
+val PHASE_COMPLETE = AudioSampleId(88)
 ```
 
-Current IDs occupy `1..33` and `40`. Native storage currently permits IDs
-`1..63`. IDs must be unique. Increase `kMaxSamples` in `AudioEngine.h` if the
-catalog outgrows that range.
+Current IDs occupy `1..33`, `40..279`, with `41..63` reserved for installed
+backing tiers. Native storage currently permits IDs `1..319`. IDs must be
+unique. Increase `kMaxSamples` in `AudioEngine.h` if the catalog outgrows that
+range.
 
 ### 3. Add it to the preload list
 
@@ -610,21 +628,23 @@ for the normal game integration workflow.
 
 ### Change the built-in melody
 
-`PopRockPhaseMelody.kt` owns fallback pitch generation. It chooses a functional
-pop-rock progression, places chord tones on strong positions, fills between
-them with nearby D-major tones, and generates one complete phrase for the
-current gameplay phase.
+`PopRockPhaseMelody.kt` owns fallback pitch generation. It chooses a tonic,
+Major or Natural Minor mode, and a functional progression, then generates one
+complete two-hand phrase for the current gameplay phase. Both hands select
+compact notes from the same chord at each step.
 
 The same phrase repeats for every attempt while that phase remains active.
 When the player clears enough bars for the playable pattern to phase,
-`selectPhase()` generates a new phrase. Player feedback harmonizes the
-corresponding shifted Base note by a diatonic third. If that would equal the
-Base pitch sounding on the same step, it uses a diatonic fifth instead. This
-keeps Player notes consonant, in key, lower than the old octave-up register,
-and distinct from simultaneous Base notes.
+`selectPhase()` generates a new phrase in a related key or mode. Candidate
+modulations are scored for a pivot tone between the old final chord and new
+first chord, then each hand starts near its previous ending note. This keeps
+the phase change distinct while avoiding an unrelated-key cut. Base uses the
+left-hand C2..B3 sample bank and Player uses the right-hand C4..B5 bank, so the
+ranges cannot cross. Exact recorded note samples are selected through
+`SoundCatalog`.
 
 Designed pitches bypass the random phrase and play their explicitly selected
-D-major palette notes.
+chromatic notes. Root/scale selectors filter the matrix view only.
 
 ### Add a new bus
 

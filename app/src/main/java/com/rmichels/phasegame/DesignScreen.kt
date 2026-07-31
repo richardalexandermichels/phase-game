@@ -16,8 +16,12 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -50,20 +54,12 @@ private enum class DesignEditor {
     PLAYER
 }
 
-private val basePitchLabels = listOf(
-    "D2", "E2", "F♯2", "G2", "A2", "B2",
-    "C♯3", "D3", "E3", "F♯3", "G3", "A3"
-)
-
-private val playerPitchLabels = listOf(
-    "D3", "E3", "F♯3", "G3", "A3", "B3",
-    "C♯4", "D4", "E4", "F♯4", "G4", "A4"
-)
-
 @Composable
 internal fun DesignScreen(
     audioEngine: AudioEngine,
     design: GameDesign,
+    baseInstrument: GameInstrument,
+    playerInstrument: GameInstrument,
     onDesignChange: (GameDesign) -> Unit,
     onPlay: () -> Unit,
     onReturnToTitle: () -> Unit,
@@ -72,6 +68,23 @@ internal fun DesignScreen(
     var editor by rememberSaveable { mutableStateOf(DesignEditor.BASE) }
     var phaseIndex by rememberSaveable { mutableIntStateOf(0) }
     var pageIndex by rememberSaveable { mutableIntStateOf(0) }
+    var scaleRoot by rememberSaveable { mutableIntStateOf(0) }
+    var scaleIndex by rememberSaveable {
+        mutableIntStateOf(PianoScalePreset.CHROMATIC.ordinal)
+    }
+    val scale = PianoScalePreset.values()[
+        scaleIndex.coerceIn(0, PianoScalePreset.values().lastIndex)
+    ]
+    val lowMidi = if (editor == DesignEditor.BASE) {
+        BASE_PIANO_LOW_MIDI
+    } else {
+        PLAYER_PIANO_LOW_MIDI
+    }
+    val visiblePitches = pitchIndicesForScale(
+        lowMidi = lowMidi,
+        rootPitchClass = scaleRoot,
+        scale = scale
+    )
     val auditionSession = remember(audioEngine) {
         audioEngine.createSession()
     }
@@ -79,6 +92,8 @@ internal fun DesignScreen(
         mutableStateOf<AudioSessionId?>(null)
     }
     val isPreviewAudioReady = audioEngine.isReady
+    val baseSamples = SoundCatalog.baseFor(baseInstrument)
+    val playerSamples = SoundCatalog.playerFor(playerInstrument)
     val previewPhaseMelody = remember(design.stepCount) {
         PopRockPhaseMelody(design.stepCount)
     }
@@ -93,9 +108,9 @@ internal fun DesignScreen(
     fun auditionPitch(pitch: Int) {
         if (!isPreviewAudioReady) return
         val sampleId = if (editor == DesignEditor.BASE) {
-            SoundCatalog.designBase[pitch]
+            baseSamples[pitch]
         } else {
-            SoundCatalog.designPlayer[pitch]
+            playerSamples[pitch]
         }
         audioEngine.playImmediate(
             sampleId = sampleId,
@@ -124,7 +139,7 @@ internal fun DesignScreen(
                     design.baseNotes[step].forEach { pitch ->
                         audioEngine.schedule(
                             AudioEvent(
-                                sampleId = SoundCatalog.designBase[pitch],
+                                sampleId = baseSamples[pitch],
                                 targetElapsedRealtimeNanos = targetNanos,
                                 bus = AudioBus.BASE,
                                 sessionId = session,
@@ -140,16 +155,13 @@ internal fun DesignScreen(
                         if (pitches.isEmpty()) {
                             audioEngine.schedule(
                                 AudioEvent(
-                                    sampleId = SoundCatalog.PLAYER_PERFECT,
+                                    sampleId = playerSamples[
+                                        previewPhaseMelody
+                                            .playerPitchIndexForStep(step)
+                                    ],
                                     targetElapsedRealtimeNanos = targetNanos,
                                     bus = AudioBus.PLAYER,
                                     sessionId = session,
-                                    playbackRate =
-                                        previewPhaseMelody
-                                            .playbackRateForPlayerStep(
-                                                step,
-                                                phaseIndex
-                                            ),
                                     priority = 2
                                 )
                             )
@@ -158,7 +170,7 @@ internal fun DesignScreen(
                                 audioEngine.schedule(
                                     AudioEvent(
                                         sampleId =
-                                            SoundCatalog.designPlayer[pitch],
+                                            playerSamples[pitch],
                                         targetElapsedRealtimeNanos =
                                             targetNanos,
                                         bus = AudioBus.PLAYER,
@@ -243,6 +255,33 @@ internal fun DesignScreen(
             }
         }
 
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            PitchSelector(
+                label = "Key",
+                selected = PIANO_PITCH_CLASS_LABELS[scaleRoot],
+                options = PIANO_PITCH_CLASS_LABELS,
+                enabled = scale != PianoScalePreset.CHROMATIC,
+                modifier = Modifier.weight(1f),
+                onSelected = { scaleRoot = it }
+            )
+            PitchSelector(
+                label = "Scale",
+                selected = scale.displayName,
+                options = PianoScalePreset.values().map { it.displayName },
+                modifier = Modifier.weight(1f),
+                onSelected = { scaleIndex = it }
+            )
+        }
+        Text(
+            text = "Scale filters rows; drag note labels to scroll. Existing notes are preserved.",
+            fontSize = 11.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+
         if (editor == DesignEditor.PLAYER) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -314,6 +353,7 @@ internal fun DesignScreen(
                     editor = editor,
                     phaseIndex = phaseIndex,
                     visibleColumns = visibleColumns,
+                    visiblePitches = visiblePitches,
                     availableWidth = availableGridWidth,
                     availableHeight = matrixHeight,
                     onDesignChange = onDesignChange,
@@ -375,6 +415,7 @@ private fun ToneMatrix(
     editor: DesignEditor,
     phaseIndex: Int,
     visibleColumns: IntRange,
+    visiblePitches: List<Int>,
     availableWidth: Dp,
     availableHeight: Dp,
     onDesignChange: (GameDesign) -> Unit,
@@ -383,21 +424,23 @@ private fun ToneMatrix(
     val columnCount = visibleColumns.count().coerceAtLeast(1)
     val cellSize = minOf(
         availableWidth / columnCount,
-        availableHeight / (DESIGN_PITCH_COUNT + 1),
-        42.dp
+        36.dp
     )
     val enabledColumns = if (editor == DesignEditor.BASE) {
         List(design.stepCount) { true }
     } else {
         design.enabledPlayerColumns(phaseIndex)
     }
-    val pitchLabels = if (editor == DesignEditor.BASE) {
-        basePitchLabels
+    val lowMidi = if (editor == DesignEditor.BASE) {
+        BASE_PIANO_LOW_MIDI
     } else {
-        playerPitchLabels
+        PLAYER_PIANO_LOW_MIDI
     }
 
     Column(
+        modifier = Modifier
+            .height(availableHeight)
+            .verticalScroll(rememberScrollState()),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -415,7 +458,8 @@ private fun ToneMatrix(
             }
         }
 
-        for (pitch in (DESIGN_PITCH_COUNT - 1) downTo 0) {
+        for (pitch in visiblePitches.asReversed()) {
+            val startingPitchPosition = visiblePitches.indexOf(pitch)
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(
                     modifier = Modifier
@@ -424,7 +468,7 @@ private fun ToneMatrix(
                     contentAlignment = Alignment.CenterEnd
                 ) {
                     Text(
-                        text = pitchLabels[pitch],
+                        text = pianoNoteLabel(lowMidi + pitch),
                         fontSize = 11.sp,
                         modifier = Modifier.padding(end = 5.dp)
                     )
@@ -480,6 +524,7 @@ private fun ToneMatrix(
                                 enabled,
                                 step,
                                 pitch,
+                                visiblePitches,
                                 visibleColumns,
                                 cellSize
                             ) {
@@ -489,7 +534,8 @@ private fun ToneMatrix(
                                 var accumulatedDragX = 0f
                                 var accumulatedDragY = 0f
                                 var previousStep = step
-                                var previousPitch = pitch
+                                var previousPitchPosition =
+                                    startingPitchPosition
                                 val paintedNotes = mutableMapOf<Int, Int>()
                                 detectDragGestures(
                                     onDragStart = {
@@ -513,19 +559,23 @@ private fun ToneMatrix(
                                             )
                                         // Pitch rows run high-to-low, so an
                                         // upward drag raises the painted note.
-                                        val pitchOffset = -(
+                                        val pitchPositionOffset = -(
                                             accumulatedDragY /
                                                 cellSize.toPx()
                                             ).roundToInt()
-                                        val targetPitch =
-                                            (pitch + pitchOffset).coerceIn(
+                                        val targetPitchPosition =
+                                            (startingPitchPosition +
+                                                pitchPositionOffset).coerceIn(
                                                 0,
-                                                DESIGN_PITCH_COUNT - 1
+                                                visiblePitches.lastIndex
                                             )
+                                        val targetPitch =
+                                            visiblePitches[targetPitchPosition]
 
                                         if (
                                             targetStep == previousStep &&
-                                            targetPitch == previousPitch
+                                            targetPitchPosition ==
+                                            previousPitchPosition
                                         ) {
                                             return@detectDragGestures
                                         }
@@ -553,15 +603,19 @@ private fun ToneMatrix(
                                                 (paintedStep - previousStep)
                                                     .toFloat() / stepDistance
                                             }
-                                            val interpolatedPitch = (
-                                                previousPitch +
-                                                    (targetPitch -
-                                                        previousPitch) *
+                                            val interpolatedPitchPosition = (
+                                                previousPitchPosition +
+                                                    (targetPitchPosition -
+                                                        previousPitchPosition) *
                                                     progress
                                                 ).roundToInt().coerceIn(
                                                 0,
-                                                DESIGN_PITCH_COUNT - 1
+                                                visiblePitches.lastIndex
                                             )
+                                            val interpolatedPitch =
+                                                visiblePitches[
+                                                    interpolatedPitchPosition
+                                                ]
                                             if (
                                                 paintedNotes[paintedStep] !=
                                                 interpolatedPitch
@@ -580,7 +634,8 @@ private fun ToneMatrix(
                                             )
                                         }
                                         previousStep = targetStep
-                                        previousPitch = targetPitch
+                                        previousPitchPosition =
+                                            targetPitchPosition
                                     },
                                     onDragEnd = {
                                         accumulatedDragX = 0f
@@ -614,6 +669,41 @@ private fun ToneMatrix(
                             }
                     )
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PitchSelector(
+    label: String,
+    selected: String,
+    options: List<String>,
+    onSelected: (Int) -> Unit,
+    enabled: Boolean = true,
+    modifier: Modifier = Modifier
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Box(modifier = modifier) {
+        OutlinedButton(
+            onClick = { expanded = true },
+            enabled = enabled,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("$label: $selected")
+        }
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false }
+        ) {
+            options.forEachIndexed { index, option ->
+                DropdownMenuItem(
+                    text = { Text(option) },
+                    onClick = {
+                        onSelected(index)
+                        expanded = false
+                    }
+                )
             }
         }
     }

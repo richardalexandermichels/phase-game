@@ -10,7 +10,7 @@
 
 namespace phaseaudio {
 
-constexpr int kMaxSamples = 64;
+constexpr int kMaxSamples = 320;
 constexpr int kMaxVoices = 48;
 constexpr int kMaxScheduledEvents = 2048;
 constexpr int kCommandQueueSize = 2048;
