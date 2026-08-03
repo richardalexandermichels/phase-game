@@ -26,8 +26,8 @@ internal object GeneratedBackingTrackCatalog {
             tiers = listOf(
                 BackingTrackTier(1, AudioSampleId(41), R.raw.backing_new_backing_track_tier_01),
                 BackingTrackTier(2, AudioSampleId(42), R.raw.backing_new_backing_track_tier_02),
-                //BackingTrackTier(3, AudioSampleId(43), R.raw.backing_new_backing_track_tier_03),
-                //BackingTrackTier(4, AudioSampleId(44), R.raw.backing_new_backing_track_tier_04),
+                BackingTrackTier(3, AudioSampleId(43), R.raw.backing_new_backing_track_tier_03),
+                BackingTrackTier(4, AudioSampleId(44), R.raw.backing_new_backing_track_tier_04),
             )
         ),
     )

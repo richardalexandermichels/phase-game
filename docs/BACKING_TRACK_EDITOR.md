@@ -157,8 +157,7 @@ integration.
 Run the normal game checks from `C:\MyDocs\PhaseGame`:
 
 ```powershell
-$env:JAVA_HOME='C:\Program Files\Android\Android Studio\jbr'
-.\gradlew.bat testDebugUnitTest assembleDebug lintDebug
+.\tools\gradle.ps1 testDebugUnitTest assembleDebug lintDebug
 ```
 
 Then verify each tier in gameplay, confirm that a miss removes the backing

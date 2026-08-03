@@ -12,7 +12,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.example.phasegame"
+        applicationId = "com.rmichels.phasegame"
         minSdk = 24
         targetSdk = 36
         versionCode = 1

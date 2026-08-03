@@ -177,3 +177,7 @@ The importer refuses to install a partial pack. Every staged output must be:
 
 After importing, run the normal audio validation and audition Base, Player,
 Design pitches, chords, and dense 250 ms patterns on a device.
+
+```powershell
+.\tools\gradle.ps1 testDebugUnitTest assembleDebug lintDebug
+```

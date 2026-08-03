@@ -1,8 +1,8 @@
 package com.rmichels.phasegame.audio
 
 import com.rmichels.phasegame.R
-import com.rmichels.phasegame.DESIGN_PITCH_COUNT
-import com.rmichels.phasegame.GameInstrument
+import com.rmichels.phasegame.design.DESIGN_PITCH_COUNT
+import com.rmichels.phasegame.music.GameInstrument
 
 internal object SoundCatalog {
     val BASE_FALLBACK = AudioSampleId(1)

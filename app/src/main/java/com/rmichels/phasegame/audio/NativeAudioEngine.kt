@@ -16,6 +16,7 @@ internal class NativeAudioEngine(
     override val isReady: Boolean
         get() = prepared && nativeHandle != 0L
 
+    @Synchronized
     override fun prepare() {
         check(nativeHandle != 0L)
         if (prepared) return
@@ -30,6 +31,7 @@ internal class NativeAudioEngine(
         prepared = true
     }
 
+    @Synchronized
     fun registerPcm16(
         sampleId: AudioSampleId,
         sampleRate: Int,
@@ -38,6 +40,7 @@ internal class NativeAudioEngine(
         check(nativeRegisterPcm16(nativeHandle, sampleId.value, sampleRate, samples))
     }
 
+    @Synchronized
     override fun start() {
         if (isReady && !started) {
             started = nativeStart(nativeHandle)
@@ -45,11 +48,13 @@ internal class NativeAudioEngine(
         }
     }
 
+    @Synchronized
     override fun stop() {
         started = false
         if (nativeHandle != 0L) nativeStop(nativeHandle)
     }
 
+    @Synchronized
     override fun release() {
         val handle = nativeHandle
         if (handle == 0L) return
